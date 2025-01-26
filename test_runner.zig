@@ -1,9 +1,13 @@
 // in your build.zig, you can specify a custom test runner:
 // const tests = b.addTest(.{
+//   .root_source_file = b.path("src/main.zig"),
 //   .target = target,
 //   .optimize = optimize,
-//   .test_runner = "test_runner.zig", // add this line
-//   .root_source_file = b.path("src/main.zig"),
+//   // Add these lines:
+//   .test_runner = .{
+//       .path = b.path("test_runner.zig"),
+//       .mode = .simple,
+//    },
 // });
 
 const std = @import("std");
@@ -300,12 +304,14 @@ const Env = struct {
     }
 };
 
-pub fn panic(msg: []const u8, error_return_trace: ?*std.builtin.StackTrace, ret_addr: ?usize) noreturn {
-    if (current_test) |ct| {
-        std.debug.print("\x1b[31m{s}\npanic running \"{s}\"\n{s}\x1b[0m\n", .{ BORDER, ct, BORDER });
+pub const panic = std.debug.FullPanic(struct {
+    pub fn panicFn(msg: []const u8, first_trace_addr: ?usize) noreturn {
+        if (current_test) |ct| {
+            std.debug.print("\x1b[31m{s}\npanic running \"{s}\"\n{s}\x1b[0m\n", .{ BORDER, ct, BORDER });
+        }
+        std.debug.defaultPanic(msg, first_trace_addr);
     }
-    std.debug.defaultPanic(msg, error_return_trace, ret_addr);
-}
+}.panicFn);
 
 fn isUnnamed(t: std.builtin.TestFn) bool {
     const marker = ".test_";
