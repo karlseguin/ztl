@@ -1,24 +1,3 @@
-// https://gist.githubusercontent.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b/raw/8e82642093d2f4341fb870d18d1fe5b213b2fd11/test_runner.zig
-// This is for the Zig 0.16.
-
-// See https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b/eb15512d6ae49663fa9df6c7a9725b20dab43edd
-// for a version that workson Zig 0.15.2.
-
-// See https://gist.github.com/karlseguin/c6bea5b35e4e8d26af6f81c22cb5d76b/1f317ebc9cd09bc50fd5591d09c34255e15d1d85
-// for a version that workson Zig 0.14.1.
-
-// in your build.zig, you can specify a custom test runner:
-// const tests = b.addTest(.{
-//    .root_module = $MODULE_BEING_TESTED,
-//    .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
-// });
-
-// in your build.zig, you can specify a custom test runner:
-// const tests = b.addTest(.{
-//    .root_module = $MODULE_BEING_TESTED,
-//    .test_runner = .{ .path = b.path("test_runner.zig"), .mode = .simple },
-// });
-
 const std = @import("std");
 const Io = std.Io;
 const builtin = @import("builtin");
@@ -56,6 +35,8 @@ pub fn main(init: std.process.Init) !void {
 
     Printer.fmt("\r\x1b[0K", .{}); // beginning of line and clear to end of line
 
+    var after_each: std.ArrayList(std.builtin.TestFn) = .empty;
+
     for (builtin.test_functions) |t| {
         if (isSetup(t)) {
             t.func() catch |err| {
@@ -63,10 +44,13 @@ pub fn main(init: std.process.Init) !void {
                 return err;
             };
         }
+        if (isAfterEach(t)) {
+            try after_each.append(allocator, t);
+        }
     }
 
     for (builtin.test_functions) |t| {
-        if (isSetup(t) or isTeardown(t)) {
+        if (isSetup(t) or isTeardown(t) or isAfterEach(t)) {
             continue;
         }
 
@@ -95,6 +79,11 @@ pub fn main(init: std.process.Init) !void {
         current_test = friendly_name;
         std.testing.allocator_instance = .{};
         const result = t.func();
+
+        for (after_each.items) |ae| {
+            try ae.func();
+        }
+
         current_test = null;
 
         const ns_taken = slowest.endTiming(io, friendly_name);
@@ -305,4 +294,8 @@ fn isSetup(t: std.builtin.TestFn) bool {
 
 fn isTeardown(t: std.builtin.TestFn) bool {
     return std.mem.endsWith(u8, t.name, "tests:afterAll");
+}
+
+fn isAfterEach(t: std.builtin.TestFn) bool {
+    return std.mem.endsWith(u8, t.name, "tests:afterEach");
 }
