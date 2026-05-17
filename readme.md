@@ -28,9 +28,8 @@ pub fn main() !void {
         return err;
     };
 
-    // Write to any writer, here we're using an ArrayList
-    var buf = std.ArrayList(u8).init(allocator);
-    defer buf.deinit();
+    var aw = std.Io.Writer.Allocating.init(allocator);
+    defer aw.deinit();
 
     var render_error_report = ztl.RenderErrorReport{};
 
@@ -46,7 +45,7 @@ pub fn main() !void {
         return err;
     };
 
-    std.debug.print("{s}\n", .{buf.items});
+    std.debug.print("{s}\n", .{aw.written()});
 }
 ```
 

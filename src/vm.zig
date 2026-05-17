@@ -39,14 +39,14 @@ pub fn VM(comptime App: type) type {
         pub fn init(allocator: Allocator, app: App) Self {
             return .{
                 .app = app,
+                ._ref_pool = .empty,
                 ._allocator = allocator,
-                ._ref_pool = RefPool.init(allocator),
             };
         }
 
         // See template.zig's hack around globals to see why we're doing this
         pub fn prepareForGlobals(self: *Self, count: usize) !void {
-            return self._globals.appendNTimes(self._allocator, .{.null = {}}, count);
+            return self._globals.appendNTimes(self._allocator, .{ .null = {} }, count);
         }
 
         pub fn injectGlobal(self: *Self, value: Value, i: usize) void {
@@ -97,7 +97,6 @@ pub fn VM(comptime App: type) type {
             var stack = &self._stack;
             var globals = &self._globals;
             var frame_pointer: usize = 0;
-
 
             while (true) {
                 const op_code: OpCode = @enumFromInt(ip[0]);
@@ -276,7 +275,7 @@ pub fn VM(comptime App: type) type {
 
                         const iterator_start = items.len - value_count;
                         ITERATE: for (items[iterator_start..len]) |it| {
-                            const value = (try iterateNext(ref_pool, it.ref)) orelse {
+                            const value = (try iterateNext(self._allocator, ref_pool, it.ref)) orelse {
                                 stack.appendAssumeCapacity(.{ .bool = false });
                                 break :ITERATE;
                             };
@@ -323,7 +322,7 @@ pub fn VM(comptime App: type) type {
                                 const value_count: u32 = @bitCast(ip[0..4].*);
                                 ip += 4;
 
-                                var ref = try ref_pool.create();
+                                var ref = try ref_pool.create(allocator);
                                 ref.* = .{ .value = .{ .list = .empty } };
                                 var list = &ref.value.list;
 
@@ -347,7 +346,7 @@ pub fn VM(comptime App: type) type {
                                 const entry_count: u32 = @bitCast(ip[0..4].*);
                                 ip += 4;
 
-                                var ref = try ref_pool.create();
+                                var ref = try ref_pool.create(allocator);
                                 ref.* = .{ .value = .{ .map = .{} } };
                                 var map = &ref.value.map;
 
@@ -1100,12 +1099,12 @@ pub fn VM(comptime App: type) type {
             switch (value) {
                 .ref => |ref| switch (ref.value) {
                     .list => |*list| {
-                        const new_ref = try ref_pool.create();
+                        const new_ref = try ref_pool.create(self._allocator);
                         new_ref.* = .{ .value = .{ .list_iterator = .{ .index = 0, .list = list, .ref = ref } } };
                         return .{ .ref = new_ref };
                     },
                     .map => |map| {
-                        const new_ref = try ref_pool.create();
+                        const new_ref = try ref_pool.create(self._allocator);
                         new_ref.* = .{ .value = .{ .map_iterator = .{ .inner = map.iterator(), .ref = ref } } };
                         return .{ .ref = new_ref };
                     },
@@ -1117,7 +1116,7 @@ pub fn VM(comptime App: type) type {
             return error.TypeError;
         }
 
-        fn iterateNext(ref_pool: *RefPool, ref: *Value.Ref) !?Value {
+        fn iterateNext(allocator: Allocator, ref_pool: *RefPool, ref: *Value.Ref) !?Value {
             switch (ref.value) {
                 .list_iterator => |*it| {
                     const index = it.index;
@@ -1130,7 +1129,7 @@ pub fn VM(comptime App: type) type {
                 },
                 .map_iterator => |*it| {
                     const entry = it.inner.next() orelse return null;
-                    const new_ref = try ref_pool.create();
+                    const new_ref = try ref_pool.create(allocator);
                     new_ref.* = .{ .value = .{ .map_entry = entry } };
                     return .{ .ref = new_ref };
                 },
@@ -1147,7 +1146,7 @@ pub fn VM(comptime App: type) type {
         }
 
         pub fn createRef(self: *Self) !*Value.Ref {
-            return self._ref_pool.create();
+            return self._ref_pool.create(self._allocator);
         }
 
         pub fn acquire(_: *const Self, value: Value) void {
@@ -1173,7 +1172,6 @@ pub fn VM(comptime App: type) type {
         }
 
         fn releaseCount(self: *Self, stack: *Stack, n: usize) void {
-
             const items = stack.items;
             const current_len = items.len;
             std.debug.assert(current_len >= n);
@@ -1207,7 +1205,6 @@ pub fn VM(comptime App: type) type {
                         for (list.items) |value| {
                             self.release(value);
                         }
-
                     }
                     list.deinit(self._allocator);
                 },
@@ -1263,7 +1260,8 @@ pub fn VM(comptime App: type) type {
                         },
                         else => return self.createValue(zig.*),
                     }
-                    .many, .slice => {
+                        .many,
+                    .slice => {
                         if (ptr.size == .many and ptr.sentinel_ptr == null) {
                             return error.UnsupportedType;
                         }
@@ -1382,22 +1380,19 @@ const Frame = struct {
 const DebugRefPool = struct {
     count: usize,
     pool: std.heap.MemoryPool(Value.Ref),
-    allocator: Allocator,
 
-    fn init(allocator: Allocator) DebugRefPool {
-        return .{
-            .count = 0,
-            .pool = .empty,
-            .allocator = allocator,
-        };
-    }
-    fn deinit(self: *DebugRefPool) void {
-        self.pool.deinit(self.allocator);
+    pub const empty = DebugRefPool{
+        .count = 0,
+        .pool = .empty,
+    };
+
+    fn deinit(self: *DebugRefPool, allocator: Allocator) void {
+        self.pool.deinit(allocator);
     }
 
-    pub fn create(self: *DebugRefPool) !*Value.Ref {
+    pub fn create(self: *DebugRefPool, allocator: Allocator) !*Value.Ref {
         self.count += 1;
-        return self.pool.create(self.allocator);
+        return self.pool.create(allocator);
     }
 
     pub fn destroy(self: *DebugRefPool, ref: *Value.Ref) void {

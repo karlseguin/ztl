@@ -304,13 +304,13 @@ test "Template: semicolon" {
     try testTemplate("Simple1",
         \\<% var x = "Simple1"; -%>
         \\<%= x %>
-   , .{});
+    , .{});
 
     // allow semicolon to be omitted on a closing tag
     try testTemplate("Simple2",
         \\<% var x = "Simple2" -%>
         \\<%= x %>
-   , .{});
+    , .{});
 
     try testTemplate("Simple3", "<%= `Simple3`; %>", .{});
     try testTemplate("Simple4", "<%= `Simple4` %>", .{});
@@ -322,7 +322,7 @@ test "Template: global in function" {
         \\   return @count + n;
         \\ } %>
         \\<%-= add(3) %>
-   , .{.count = 4});
+    , .{ .count = 4 });
 }
 
 test "Template: string concatenation" {
@@ -337,19 +337,19 @@ test "Template: string concatenation" {
     try testTemplate("3 world", "<%-= 3.toString() + ' ' + 'world' %>", .{});
     try testTemplate("true world", "<%-= true.toString() + ' ' + 'world' %>", .{});
 
-    try testTemplate("over 9000!!", "<%-= @a  +' ' + @b + `!!` %>", .{.a = "over", .b = 9000});
+    try testTemplate("over 9000!!", "<%-= @a  +' ' + @b + `!!` %>", .{ .a = "over", .b = 9000 });
 }
 
 test "Template: @include" {
     try testTemplate("included_1",
         \\<% @include("incl_1") %>
-   , .{});
+    , .{});
 
     try testTemplate("included_1,included_1,",
         \\<% for (var i = 0; i < 2; i++) { -%>
         \\ <% @include("incl_1") %>,
         \\<%- } %>
-   , .{});
+    , .{});
 
     try testTemplate("included:2", "<% @include('incl_2') %>", .{});
 
@@ -395,17 +395,16 @@ test "Template: multiple index get" {
     }
 
     {
-
         const UserOptions = struct {
             name: []const u8,
             description: []const u8,
-            @"type": []const u8,
+            type: []const u8,
         };
 
         const globals = .{
             .report = .{
                 .user_options = [_]UserOptions{
-                    .{.name = "Leto", .description = "Worm", .type = "atreides"},
+                    .{ .name = "Leto", .description = "Worm", .type = "atreides" },
                 },
             },
         };
@@ -422,7 +421,7 @@ test "Template: multiple index get" {
             \\<% foreach (@zbs["report"]["user_options"]) |user_option| { %>
             \\# -D<%= user_option %>]
             \\<%- } %>
-        , .{.zbs = globals});
+        , .{ .zbs = globals });
     }
 }
 
@@ -457,19 +456,19 @@ fn testTemplate(expected: []const u8, template: []const u8, args: anytype) !void
             _ = template_key;
 
             if (std.mem.eql(u8, include_key, "incl_1")) {
-                return .{.src = "<%= `included_1` %>"};
+                return .{ .src = "<%= `included_1` %>" };
             }
 
             if (std.mem.eql(u8, include_key, "incl_2")) {
-                return .{.src = "included:2"};
+                return .{ .src = "included:2" };
             }
 
             if (std.mem.eql(u8, include_key, "incl_arg_1")) {
-                return .{.src = "include <%= @value %>"};
+                return .{ .src = "include <%= @value %>" };
             }
 
             if (std.mem.eql(u8, include_key, "incl_arg_2")) {
-                return .{.src = "<% var x = 'incl_local' %> include <%= x %> <%= @value %>"};
+                return .{ .src = "<% var x = 'incl_local' %> include <%= x %> <%= @value %>" };
             }
 
             return null;
@@ -484,8 +483,8 @@ fn testTemplateWithApp(comptime App: type, app: App, expected: []const u8, templ
     defer tmpl.deinit();
 
     var error_report = CompileErrorReport{};
-    tmpl.compile(template, .{.error_report = &error_report}) catch |err| {
-        std.debug.print("Compile template error:\n{}\n", .{error_report});
+    tmpl.compile(template, .{ .error_report = &error_report }) catch |err| {
+        std.debug.print("Compile template error:\n{f}\n", .{error_report});
         return err;
     };
     // try tmpl.disassemble(std.io.getStdErr().writer());
@@ -509,7 +508,7 @@ fn testTemplateError(expected: []const u8, template: []const u8) !void {
     defer tmpl.deinit();
 
     var error_report = CompileErrorReport{};
-    tmpl.compile(template, .{.error_report = &error_report}) catch {
+    tmpl.compile(template, .{ .error_report = &error_report }) catch {
         try t.expectString(expected, error_report.message);
         return;
     };
@@ -523,14 +522,14 @@ fn testTemplateFullError(expected: []const u8, template: []const u8) !void {
             _ = template_key;
 
             if (std.mem.eql(u8, include_key, "incl_err_1")) {
-                return .{.src =
-                    \\ Products:
-                    \\ <% for ; %>
-                };
+                return .{ .src = 
+                \\ Products:
+                \\ <% for ; %>
+            };
             }
 
             if (std.mem.eql(u8, include_key, "incl_err_2")) {
-                return .{.src = "<%="};
+                return .{ .src = "<%=" };
             }
 
             return null;
@@ -541,7 +540,7 @@ fn testTemplateFullError(expected: []const u8, template: []const u8) !void {
     defer tmpl.deinit();
 
     var error_report = CompileErrorReport{};
-    tmpl.compile(template, .{.error_report = &error_report}) catch {
+    tmpl.compile(template, .{ .error_report = &error_report }) catch {
         var aw: std.Io.Writer.Allocating = .init(t.allocator);
         defer aw.deinit();
 

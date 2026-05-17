@@ -37,10 +37,10 @@ pub fn Compiler(comptime A: type) type {
 
         const valid_parameters = blk: {
             if (params.len == 4) {
-                break :blk  params[0].type.? == A and
-                            params[1].type.? == Allocator and
-                            params[2].type.? == []const u8 and
-                            params[3].type.? == []const u8;
+                break :blk params[0].type.? == A and
+                    params[1].type.? == Allocator and
+                    params[2].type.? == []const u8 and
+                    params[3].type.? == []const u8;
             }
             break :blk false;
         };
@@ -123,7 +123,11 @@ pub fn Compiler(comptime A: type) type {
         const Self = @This();
 
         // we expect allocator to be an arena
-        pub fn init(allocator: Allocator, app: A, opts: Opts,) !Self {
+        pub fn init(
+            allocator: Allocator,
+            app: A,
+            opts: Opts,
+        ) !Self {
             return .{
                 .app = app,
                 .err = null,
@@ -217,7 +221,7 @@ pub fn Compiler(comptime A: type) type {
         }
 
         fn consumeSemicolon(self: *Self, allow_close_tag: bool) !void {
-            if (try self.match(.SEMICOLON))  {
+            if (try self.match(.SEMICOLON)) {
                 return;
             }
             if (allow_close_tag) {
@@ -280,7 +284,7 @@ pub fn Compiler(comptime A: type) type {
                     }
                     try self.writer.op(op_code);
                 },
-                .code =>  switch (self.current) {
+                .code => switch (self.current) {
                     .PERCENT_GREATER => {
                         self.mode = .literal;
                         return;
@@ -373,7 +377,7 @@ pub fn Compiler(comptime A: type) type {
                         }
                     },
                     else => return self.statement(),
-                }
+                },
             }
         }
 
@@ -431,7 +435,7 @@ pub fn Compiler(comptime A: type) type {
                     continue;
                 }
 
-                var lit = src[start..idx - 1];
+                var lit = src[start .. idx - 1];
                 // skip the %
                 pos = idx + 1;
 
@@ -803,12 +807,12 @@ pub fn Compiler(comptime A: type) type {
                             return error.PartialsNotConfigured;
                         }
 
-                       const include_key = switch (self.current) {
+                        const include_key = switch (self.current) {
                             .STRING => |str| str,
                             else => {
                                 try self.setExpectationError("partial name (a string literal)");
                                 return error.Invalid;
-                            }
+                            },
                         };
 
                         for (self.includes.items) |incl| {
@@ -843,7 +847,7 @@ pub fn Compiler(comptime A: type) type {
 
                         // Ask the app for the include source
                         const result = self.app.partial(self.arena, self.opts.key, include_key) catch |err| {
-                            try self.setErrorFmt("Failed to load partial: '{s}'. Load Error: {}", .{include_key, err});
+                            try self.setErrorFmt("Failed to load partial: '{s}'. Load Error: {}", .{ include_key, err });
                             return error.PartialLoadError;
                         } orelse {
                             try self.setErrorFmt("Unknown partial: '{s}'", .{include_key});
@@ -856,7 +860,7 @@ pub fn Compiler(comptime A: type) type {
                         try self.beginInclude(include_key, result.src);
 
                         try self.beginScope(false);
-                        try self.locals.append(self.arena, .{.name = include_fn_name, .depth = 0});
+                        try self.locals.append(self.arena, .{ .name = include_fn_name, .depth = 0 });
                         gop.value_ptr.* = try self.newFunction(include_fn_name);
                         try writer.beginFunction(include_fn_name);
 
@@ -1160,7 +1164,6 @@ pub fn Compiler(comptime A: type) type {
                         else => {
                             try self.setErrorFmt("Map key must be an integer, string or identifier, got {f} ({s})", .{ current_token, @tagName(current_token) });
                             return error.InvalidMapKeyType;
-
                         },
                     }
                     try self.advance();
@@ -1508,8 +1511,8 @@ pub fn Compiler(comptime A: type) type {
 
             self.scanner.reset(src);
             self.mode = .literal;
-            self.previous = .{.BOF = {}};
-            self.current = .{.BOF = {}};
+            self.previous = .{ .BOF = {} };
+            self.current = .{ .BOF = {} };
             self.global_mode = .include;
         }
 
@@ -1567,9 +1570,9 @@ pub fn Compiler(comptime A: type) type {
 }
 
 const Mode = enum {
-    code,     // <% ... %>
-    output,   // <%= ... %>
-    literal,  // everything NOT in the above
+    code, // <% ... %>
+    output, // <%= ... %>
+    literal, // everything NOT in the above
     literal_strip_left,
 };
 
@@ -3574,11 +3577,11 @@ test "Compiler: method concat" {
 
 test "Compiler: method toString" {
     try testError("Function 'toString' expects 0 parameters, but called with 2", "return [].toString('', 0)");
-    try testReturnValue(.{.string = "abc"}, "return 'abc'.toString(); ");
-    try testReturnValue(.{.string = "123aabz"}, "return '123aabz'.toString().toString(); ");
-    try testReturnValue(.{.string = "3"}, "return 3.toString(); ");
-    try testReturnValue(.{.string = "false"}, "return false.toString(); ");
-    try testReturnValue(.{.string = "[1, 2, 3]"}, "return [1,2,3].toString(); ");
+    try testReturnValue(.{ .string = "abc" }, "return 'abc'.toString(); ");
+    try testReturnValue(.{ .string = "123aabz" }, "return '123aabz'.toString().toString(); ");
+    try testReturnValue(.{ .string = "3" }, "return 3.toString(); ");
+    try testReturnValue(.{ .string = "false" }, "return false.toString(); ");
+    try testReturnValue(.{ .string = "[1, 2, 3]" }, "return [1,2,3].toString(); ");
 }
 
 test "Compiler: partial" {
@@ -3601,15 +3604,15 @@ test "Compiler: partial" {
             }
 
             if (std.mem.eql(u8, include_key, "incl_dbl")) {
-                return .{.src = "<% fn dbl(a) { return a * 2; } %>"};
+                return .{ .src = "<% fn dbl(a) { return a * 2; } %>" };
             }
 
             if (std.mem.eql(u8, include_key, "recursive_1")) {
-                return .{.src = "<% @include('recursive_2') %>"};
+                return .{ .src = "<% @include('recursive_2') %>" };
             }
 
             if (std.mem.eql(u8, include_key, "recursive_2")) {
-                return .{.src = "<% @include('recursive_1') %>"};
+                return .{ .src = "<% @include('recursive_1') %>" };
             }
 
             return null;
@@ -3636,7 +3639,7 @@ test "Compiler: partial" {
         \\ @include("recursive_1");
     );
 
-    try testReturnValueWithApp(App, .{}, .{.i64 = 12350},
+    try testReturnValueWithApp(App, .{}, .{ .i64 = 12350 },
         \\ @include("incl_dbl");
         \\ return dbl(6175);
     );
@@ -3670,9 +3673,9 @@ fn testReturnValueWithApp(comptime App: type, app: App, expected: Value, comptim
 
     const byte_code = blk: {
         var error_report = ztl.CompileErrorReport{};
-        var c = try Compiler(App).init(allocator, app, .{.error_report = &error_report});
+        var c = try Compiler(App).init(allocator, app, .{ .error_report = &error_report });
         c.compile("<% " ++ src ++ "%>") catch |err| {
-            std.debug.print("Compilation error: {any}\n{f}\n", .{err, error_report});
+            std.debug.print("Compilation error: {any}\n{f}\n", .{ err, error_report });
             return err;
         };
         break :blk try c.writer.toBytes(allocator);
@@ -3683,6 +3686,7 @@ fn testReturnValueWithApp(comptime App: type, app: App, expected: Value, comptim
     var vm = ztl.VM(App).init(allocator, app);
 
     var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
     const value = vm.run(byte_code, &aw.writer) catch |err| {
         std.debug.print("{any}", .{err});
         if (vm.err) |e| {
@@ -3711,7 +3715,7 @@ fn testError(expected: []const u8, comptime src: []const u8) !void {
 
 fn testErrorWithApp(comptime App: type, app: App, expected: []const u8, comptime src: []const u8) !void {
     var error_report = ztl.CompileErrorReport{};
-    var c = Compiler(App).init(t.arena.allocator(), app, .{.error_report = &error_report}) catch unreachable;
+    var c = Compiler(App).init(t.arena.allocator(), app, .{ .error_report = &error_report }) catch unreachable;
 
     c.compile("<% " ++ src ++ " %>") catch {
         var aw: std.Io.Writer.Allocating = .init(t.allocator);
@@ -3719,7 +3723,7 @@ fn testErrorWithApp(comptime App: type, app: App, expected: []const u8, comptime
 
         try aw.writer.print("{f}", .{error_report});
         if (std.mem.indexOf(u8, aw.written(), expected) == null) {
-            std.debug.print("Wrong error\nexpected: '{s}'\nactual:   '{s}'\n", .{ expected, aw.written()});
+            std.debug.print("Wrong error\nexpected: '{s}'\nactual:   '{s}'\n", .{ expected, aw.written() });
             return error.WrongError;
         }
         return;
@@ -3734,9 +3738,9 @@ fn testErrorWithApp(comptime App: type, app: App, expected: []const u8, comptime
 
 fn testRuntimeError(expected: []const u8, comptime src: []const u8) !void {
     var error_report = ztl.CompileErrorReport{};
-    var c = try Compiler(void).init(t.arena.allocator(), {}, .{.error_report = &error_report});
+    var c = try Compiler(void).init(t.arena.allocator(), {}, .{ .error_report = &error_report });
     c.compile("<% " ++ src ++ " %>") catch |err| {
-        std.debug.print("Compilation error: {any}\n{f}\n", .{err, error_report});
+        std.debug.print("Compilation error: {any}\n{f}\n", .{ err, error_report });
         return err;
     };
 

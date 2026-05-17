@@ -280,7 +280,7 @@ pub const Value = union(enum) {
 
     fn convertForEquality(self: Value) Value {
         if (self == .ref and self.ref.value == .buffer) {
-            return .{.string = self.ref.value.buffer.items};
+            return .{ .string = self.ref.value.buffer.items };
         }
         return self;
     }
@@ -373,7 +373,7 @@ pub const MapIterator = struct {
 fn writeStringEscaped(writer: *std.Io.Writer, value: []const u8) !void {
     var v = value;
     while (v.len > 0) {
-        const index = std.mem.indexOfAnyPos(u8, v, 0, &.{'&', '<', '>', '"', '\''}) orelse {
+        const index = std.mem.indexOfAnyPos(u8, v, 0, &.{ '&', '<', '>', '"', '\'' }) orelse {
             return writer.writeAll(v);
         };
         try writer.writeAll(v[0..index]);
@@ -385,7 +385,7 @@ fn writeStringEscaped(writer: *std.Io.Writer, value: []const u8) !void {
             '\'' => try writer.writeAll("&#39;"),
             else => unreachable,
         }
-        v = v[index+1..];
+        v = v[index + 1 ..];
     }
 }
 
@@ -534,17 +534,17 @@ test "writeStringEscaped" {
     var aw: std.Io.Writer.Allocating = .init(t.allocator);
     defer aw.deinit();
 
-    // {
-    //     try writeStringEscaped(&aw.writer, "hello world");
-    //     try t.expectString("hello world", aw.written());
-    //     aw.clearRetainingCapacity();
-    // }
+    {
+        try writeStringEscaped(&aw.writer, "hello world");
+        try t.expectString("hello world", aw.written());
+        aw.clearRetainingCapacity();
+    }
 
-    // {
-    //     try writeStringEscaped(&aw.writer, "<>\"'&");
-    //     try t.expectString("&lt;&gt;&#34;&#39;&amp;", aw.written());
-    //     aw.clearRetainingCapacity();
-    // }
+    {
+        try writeStringEscaped(&aw.writer, "<>\"'&");
+        try t.expectString("&lt;&gt;&#34;&#39;&amp;", aw.written());
+        aw.clearRetainingCapacity();
+    }
 
     {
         try writeStringEscaped(&aw.writer, " < > \" ' & ");

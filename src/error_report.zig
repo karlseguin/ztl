@@ -74,10 +74,10 @@ pub const Compile = struct {
         var i: usize = 0;
         const src = self.src;
 
-        while (i <= line_count) : ( i += 1) {
+        while (i <= line_count) : (i += 1) {
             pos = std.mem.lastIndexOfScalar(u8, src[0..pos], '\n') orelse return src[0..end];
         }
-        return src[pos+1..end];
+        return src[pos + 1 .. end];
     }
 
     pub fn contextAfter(self: *const Compile, line_count: usize) []const u8 {
@@ -91,11 +91,11 @@ pub const Compile = struct {
 
         var pos = start;
         var i: usize = 0;
-        while (i <= line_count) : ( i += 1) {
+        while (i <= line_count) : (i += 1) {
             pos = std.mem.indexOfScalarPos(u8, src, pos, '\n') orelse return src[start..];
             pos += 1;
         }
-        return src[start..pos - 1];
+        return src[start .. pos - 1];
     }
 };
 
