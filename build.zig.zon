@@ -3,6 +3,5 @@
 	.paths = .{""},
 	.version = "0.0.0",
 	.fingerprint = 0xa970a5155c20c65c,
-	.dependencies = .{
-	},
+	.minimum_zig_version = "0.16.0",
 }

@@ -10,7 +10,7 @@ const VERSION = @import("byte_code.zig").VERSION;
 
 const Allocator = std.mem.Allocator;
 
-const Stack = std.ArrayListUnmanaged(Value);
+const Stack = std.ArrayList(Value);
 
 pub const RefPool = if (builtin.is_test) DebugRefPool else std.heap.MemoryPool(Value.Ref);
 
@@ -23,8 +23,8 @@ pub fn VM(comptime App: type) type {
         _allocator: Allocator,
         _ref_pool: RefPool,
 
-        _stack: Stack = .{},
-        _globals: Stack = .{},
+        _stack: Stack = .empty,
+        _globals: Stack = .empty,
 
         _frames: [MAX_CALL_FRAMES]Frame = undefined,
 
@@ -214,7 +214,7 @@ pub fn VM(comptime App: type) type {
                             .i64 => |n| v.i64 = -n,
                             .f64 => |n| v.f64 = -n,
                             else => {
-                                try self.setErrorFmt("Cannot negate non-numeric value: -{s}", .{v.*});
+                                try self.setErrorFmt("Cannot negate non-numeric value: -{f}", .{v.*});
                                 return error.TypeError;
                             },
                         }
@@ -224,7 +224,7 @@ pub fn VM(comptime App: type) type {
                         switch (v.*) {
                             .bool => |b| v.bool = !b,
                             else => {
-                                try self.setErrorFmt("Cannot inverse non-boolean value: !{s}", .{v.*});
+                                try self.setErrorFmt("Cannot inverse non-boolean value: !{f}", .{v.*});
                                 return error.TypeError;
                             },
                         }
@@ -324,7 +324,7 @@ pub fn VM(comptime App: type) type {
                                 ip += 4;
 
                                 var ref = try ref_pool.create();
-                                ref.* = .{ .value = .{ .list = .{} } };
+                                ref.* = .{ .value = .{ .list = .empty } };
                                 var list = &ref.value.list;
 
                                 if (value_count == 0) {
@@ -511,9 +511,10 @@ pub fn VM(comptime App: type) type {
                             const start_index = items.len - arity;
 
                             {
-                                std.debug.lockStdErr();
-                                defer std.debug.unlockStdErr();
-                                const stderr = std.io.getStdErr().writer();
+                                var stderr_lock = std.debug.lockStderr(&.{});
+                                defer std.debug.unlockStderr();
+
+                                const stderr = stderr_lock.terminal().writer;
                                 try items[start_index].write(stderr, false);
                                 for (items[start_index + 1 ..]) |value| {
                                     try stderr.writeAll(" ");
@@ -587,9 +588,15 @@ pub fn VM(comptime App: type) type {
                     else => {},
                 },
                 .string => |l| {
-                    var buffer = Value.Buffer{};
+                    var buffer: Value.Buffer = .empty;
                     try buffer.appendSlice(self._allocator, l);
-                    try right.write(buffer.writer(self._allocator), false);
+                    {
+                        var aw: std.Io.Writer.Allocating = .fromArrayList(self._allocator, &buffer);
+                        defer buffer = aw.toArrayList();
+                        right.write(&aw.writer, false) catch |err| switch (err) {
+                            error.WriteFailed => return error.OutOfMemory, // See ArrayList.print
+                        };
+                    }
 
                     const buffer_ref = try self.createRef();
                     buffer_ref.* = .{ .count = 1, .value = .{ .buffer = buffer } };
@@ -598,13 +605,25 @@ pub fn VM(comptime App: type) type {
                 else => {
                     const allocator = self._allocator;
                     if (left == .ref and left.ref.value == .buffer) {
-                        try right.write(left.ref.value.buffer.writer(allocator), false);
+                        {
+                            var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &left.ref.value.buffer);
+                            defer left.ref.value.buffer = aw.toArrayList();
+                            right.write(&aw.writer, false) catch |err| switch (err) {
+                                error.WriteFailed => return error.OutOfMemory, // See ArrayList.print
+                            };
+                        }
                         return left;
                     }
                     switch (right) {
                         .string => |r| {
-                            var buffer = Value.Buffer{};
-                            try left.write(buffer.writer(allocator), false);
+                            var buffer: Value.Buffer = .empty;
+                            {
+                                var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &buffer);
+                                defer buffer = aw.toArrayList();
+                                left.write(&aw.writer, false) catch |err| switch (err) {
+                                    error.WriteFailed => return error.OutOfMemory, // See ArrayList.print
+                                };
+                            }
                             try buffer.appendSlice(allocator, r);
 
                             const buffer_ref = try self.createRef();
@@ -613,8 +632,14 @@ pub fn VM(comptime App: type) type {
                         },
                         .ref => |ref| switch (ref.value) {
                             .buffer => |r| {
-                                var buffer = Value.Buffer{};
-                                try left.write(buffer.writer(allocator), false);
+                                var buffer: Value.Buffer = .empty;
+                                {
+                                    var aw: std.Io.Writer.Allocating = .fromArrayList(allocator, &buffer);
+                                    defer buffer = aw.toArrayList();
+                                    left.write(&aw.writer, false) catch |err| switch (err) {
+                                        error.WriteFailed => return error.OutOfMemory, // See ArrayList.print
+                                    };
+                                }
                                 try buffer.appendSlice(allocator, r.items);
                                 self.releaseRef(ref);
 
@@ -628,7 +653,7 @@ pub fn VM(comptime App: type) type {
                     }
                 },
             }
-            try self.setErrorFmt("Cannot add non-numeric value: {s} + {s}", .{ left, right });
+            try self.setErrorFmt("Cannot add non-numeric value: {f} + {f}", .{ left, right });
             return error.TypeError;
         }
 
@@ -646,7 +671,7 @@ pub fn VM(comptime App: type) type {
                 },
                 else => {},
             }
-            try self.setErrorFmt("Cannot subtract non-numeric value: {s} - {s}", .{ left, right });
+            try self.setErrorFmt("Cannot subtract non-numeric value: {f} - {f}", .{ left, right });
             return error.TypeError;
         }
 
@@ -664,7 +689,7 @@ pub fn VM(comptime App: type) type {
                 },
                 else => {},
             }
-            try self.setErrorFmt("Cannot multiply non-numeric value: {s} - {s}", .{ left, right });
+            try self.setErrorFmt("Cannot multiply non-numeric value: {f} - {f}", .{ left, right });
             return error.TypeError;
         }
 
@@ -682,7 +707,7 @@ pub fn VM(comptime App: type) type {
                 },
                 else => {},
             }
-            try self.setErrorFmt("Cannot divide non-numeric value: {s} - {s}", .{ left, right });
+            try self.setErrorFmt("Cannot divide non-numeric value: {f} - {f}", .{ left, right });
             return error.TypeError;
         }
 
@@ -694,7 +719,7 @@ pub fn VM(comptime App: type) type {
                 },
                 else => {},
             }
-            try self.setErrorFmt("Cannot take remainder of non-integer value: {s} - {s}", .{ left, right });
+            try self.setErrorFmt("Cannot take remainder of non-integer value: {f} - {f}", .{ left, right });
             return error.TypeError;
         }
 
@@ -723,7 +748,7 @@ pub fn VM(comptime App: type) type {
 
         fn equal(self: *Self, left: Value, right: Value) ComparisonError!bool {
             return left.equal(right) catch {
-                try self.setErrorFmt("Incompatible type comparison: {s} == {s} ({s}, {s})", .{ left, right, left.friendlyName(), right.friendlyName() });
+                try self.setErrorFmt("Incompatible type comparison: {f} == {f} ({s}, {s})", .{ left, right, left.friendlyName(), right.friendlyName() });
                 return error.TypeError;
             };
         }
@@ -746,7 +771,7 @@ pub fn VM(comptime App: type) type {
                 },
                 else => {},
             }
-            try self.setErrorFmt("Incompatible type comparison: {s} > {s} ({s}, {s})", .{ left, right, left.friendlyName(), right.friendlyName() });
+            try self.setErrorFmt("Incompatible type comparison: {f} > {f} ({s}, {s})", .{ left, right, left.friendlyName(), right.friendlyName() });
             return error.TypeError;
         }
 
@@ -768,7 +793,7 @@ pub fn VM(comptime App: type) type {
                 },
                 else => {},
             }
-            try self.setErrorFmt("Incompatible type comparison: {s} < {s} ({s}, {s})", .{ left, right, left.friendlyName(), right.friendlyName() });
+            try self.setErrorFmt("Incompatible type comparison: {f} < {f} ({s}, {s})", .{ left, right, left.friendlyName(), right.friendlyName() });
             return error.TypeError;
         }
 
@@ -904,7 +929,7 @@ pub fn VM(comptime App: type) type {
                 .ref => |ref| switch (ref.value) {
                     .map => |*map| {
                         const value = map.getPtr(.{ .string = index }) orelse {
-                            try self.setErrorFmt("Map does not contain key '{d}'", .{index});
+                            try self.setErrorFmt("Map does not contain key '{s}'", .{index});
                             return error.MissingKey;
                         };
                         value.* = try self.add(value.*, incr);
@@ -968,8 +993,14 @@ pub fn VM(comptime App: type) type {
                 if (target == .ref and target.ref.value == .buffer) {
                     return target;
                 }
-                var buffer = Value.Buffer{};
-                try target.write(buffer.writer(allocator), false);
+                var buffer: Value.Buffer = .empty;
+                {
+                    var aw: std.Io.Writer.Allocating = .fromArrayList(self._allocator, &buffer);
+                    defer buffer = aw.toArrayList();
+                    target.write(&aw.writer, false) catch |err| switch (err) {
+                        error.WriteFailed => return error.OutOfMemory, // See ArrayList.print
+                    };
+                }
 
                 const buffer_ref = try self.createRef();
                 buffer_ref.* = .{ .count = 0, .value = .{ .buffer = buffer } };
@@ -1242,7 +1273,7 @@ pub fn VM(comptime App: type) type {
                             return .{ .string = zig };
                         }
 
-                        var list: Value.List = .{};
+                        var list: Value.List = .empty;
                         try list.ensureTotalCapacity(self._allocator, slice.len);
                         for (slice) |v| {
                             list.appendAssumeCapacity(try self.createValue(v));
@@ -1351,20 +1382,22 @@ const Frame = struct {
 const DebugRefPool = struct {
     count: usize,
     pool: std.heap.MemoryPool(Value.Ref),
+    allocator: Allocator,
 
     fn init(allocator: Allocator) DebugRefPool {
         return .{
             .count = 0,
-            .pool = std.heap.MemoryPool(Value.Ref).init(allocator),
+            .pool = .empty,
+            .allocator = allocator,
         };
     }
     fn deinit(self: *DebugRefPool) void {
-        self.pool.deinit();
+        self.pool.deinit(self.allocator);
     }
 
     pub fn create(self: *DebugRefPool) !*Value.Ref {
         self.count += 1;
-        return self.pool.create();
+        return self.pool.create(self.allocator);
     }
 
     pub fn destroy(self: *DebugRefPool, ref: *Value.Ref) void {

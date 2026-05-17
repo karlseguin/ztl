@@ -10,9 +10,11 @@ pub fn build(b: *std.Build) !void {
 
     // setup tests
     const tests = b.addTest(.{
-        .root_source_file = b.path("src/ztl.zig"),
-        .target = target,
-        .optimize = optimize,
+        .root_module = b.createModule(.{
+            .root_source_file = b.path("src/ztl.zig"),
+            .target = target,
+            .optimize = optimize,
+        }),
         .test_runner = .{
             .path = b.path("test_runner.zig"),
             .mode = .simple,

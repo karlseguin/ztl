@@ -5,9 +5,9 @@ const RefPool = @import("vm.zig").RefPool;
 const Allocator = std.mem.Allocator;
 
 pub const Value = union(enum) {
-    pub const List = std.ArrayListUnmanaged(Value);
-    pub const Buffer = std.ArrayListUnmanaged(u8);
-    pub const Map = std.ArrayHashMapUnmanaged(KeyValue, Value, KeyValue.Context, true);
+    pub const List = std.ArrayList(Value);
+    pub const Buffer = std.ArrayList(u8);
+    pub const Map = std.array_hash_map.Custom(KeyValue, Value, KeyValue.Context, true);
 
     i64: i64,
     f64: f64,
@@ -16,7 +16,7 @@ pub const Value = union(enum) {
     ref: *Ref,
     string: []const u8,
 
-    pub fn format(self: Value, _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: Value, writer: *std.Io.Writer) !void {
         return self.write(writer, false);
     }
 
@@ -32,11 +32,11 @@ pub const Value = union(enum) {
         },
     };
 
-    pub fn write(self: Value, writer: anytype, escape: bool) !void {
+    pub fn write(self: Value, writer: *std.Io.Writer, escape: bool) !void {
         switch (self) {
-            .i64 => |v| return std.fmt.formatInt(v, 10, .lower, .{}, writer),
+            .i64 => |v| return writer.printInt(v, 10, .lower, .{}),
             .bool => |v| return writer.writeAll(if (v) "true" else "false"),
-            .f64 => |v| return std.fmt.format(writer, "{d}", .{v}),
+            .f64 => |v| return writer.print("{d}", .{v}),
             .null => return writer.writeAll("null"),
             .string => |v| if (escape) try writeStringEscaped(writer, v) else try writer.writeAll(v),
             .ref => |ref| switch (ref.value) {
@@ -290,13 +290,13 @@ pub const KeyValue = union(enum) {
     i64: i64,
     string: []const u8,
 
-    pub fn format(self: KeyValue, _: []const u8, _: anytype, writer: anytype) !void {
+    pub fn format(self: KeyValue, writer: *std.Io.Writer) !void {
         return self.write(writer, false);
     }
 
-    pub fn write(self: KeyValue, writer: anytype, escape: bool) !void {
+    pub fn write(self: KeyValue, writer: *std.Io.Writer, escape: bool) !void {
         switch (self) {
-            .i64 => |v| return std.fmt.formatInt(v, 10, .lower, .{}, writer),
+            .i64 => |v| return writer.printInt(v, 10, .lower, .{}),
             .string => |v| if (escape) try writeStringEscaped(writer, v) else try writer.writeAll(v),
         }
     }
@@ -370,7 +370,7 @@ pub const MapIterator = struct {
     ref: *Value.Ref, // the Value.Ref of the map, which we need to deference when the iterator goes out of scope
 };
 
-fn writeStringEscaped(writer: anytype, value: []const u8) !void {
+fn writeStringEscaped(writer: *std.Io.Writer, value: []const u8) !void {
     var v = value;
     while (v.len > 0) {
         const index = std.mem.indexOfAnyPos(u8, v, 0, &.{'&', '<', '>', '"', '\''}) orelse {
@@ -531,34 +531,34 @@ test "Value: equal" {
 }
 
 test "writeStringEscaped" {
-    var buf = std.ArrayList(u8).init(t.allocator);
-    defer buf.deinit();
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
 
     // {
-    //     try writeStringEscaped(buf.writer(), "hello world");
-    //     try t.expectString("hello world", buf.items);
-    //     buf.clearRetainingCapacity();
+    //     try writeStringEscaped(&aw.writer, "hello world");
+    //     try t.expectString("hello world", aw.written());
+    //     aw.clearRetainingCapacity();
     // }
 
     // {
-    //     try writeStringEscaped(buf.writer(), "<>\"'&");
-    //     try t.expectString("&lt;&gt;&#34;&#39;&amp;", buf.items);
-    //     buf.clearRetainingCapacity();
+    //     try writeStringEscaped(&aw.writer, "<>\"'&");
+    //     try t.expectString("&lt;&gt;&#34;&#39;&amp;", aw.written());
+    //     aw.clearRetainingCapacity();
     // }
 
     {
-        try writeStringEscaped(buf.writer(), " < > \" ' & ");
-        try t.expectString(" &lt; &gt; &#34; &#39; &amp; ", buf.items);
-        buf.clearRetainingCapacity();
+        try writeStringEscaped(&aw.writer, " < > \" ' & ");
+        try t.expectString(" &lt; &gt; &#34; &#39; &amp; ", aw.written());
+        aw.clearRetainingCapacity();
     }
 }
 
 fn assertFormat(expected: []const u8, value: Value) !void {
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
 
-    try std.fmt.format(arr.writer(), "{}", .{value});
-    try t.expectString(expected, arr.items);
+    try aw.writer.print("{f}", .{value});
+    try t.expectString(expected, aw.written());
 }
 
 fn assertEqual(expected: bool, left: Value, right: Value) !void {

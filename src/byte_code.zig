@@ -358,7 +358,7 @@ fn Buffer(comptime initial_size: u32) type {
     };
 }
 
-pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const u8, writer: anytype) !void {
+pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const u8, writer: *std.Io.Writer) !void {
     const LocalIndex = config.LocalType(App);
     const SL = @sizeOf(LocalIndex);
 
@@ -371,7 +371,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
 
     const code = byte_code[9 .. code_length + 9];
     const data = byte_code[9 + code_length ..];
-    try std.fmt.format(writer, "// Version: {d}\n", .{byte_code[0]});
+    try writer.print("// Version: {d}\n", .{byte_code[0]});
 
     while (i < code.len) {
         if (i == script_start) {
@@ -381,12 +381,12 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
             try writer.writeAll("<main>:\n");
         }
         const op_code_pos = i;
-        const op_code = std.meta.intToEnum(OpCode, code[i]) catch {
-            try std.fmt.format(writer, "{x:0>4} ??? ({d})", .{ i, code[i] });
+        const op_code = std.enums.fromInt(OpCode, code[i]) orelse {
+            try writer.print("{x:0>4} ??? ({d})", .{ i, code[i] });
             return;
         };
         if (op_code != .DEBUG) {
-            try std.fmt.format(writer, "{x:0>4} {s}", .{ i, @tagName(op_code) });
+            try writer.print("{x:0>4} {s}", .{ i, @tagName(op_code) });
         }
 
         i += 1;
@@ -404,7 +404,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                         }
                         const function_name_len: u16 = @bitCast(code[i .. i + 2][0..2].*);
                         i += 2;
-                        try std.fmt.format(writer, "{x:0>4} fn {s}:\n", .{ op_code_pos, code[i .. i + function_name_len] });
+                        try writer.print("{x:0>4} fn {s}:\n", .{ op_code_pos, code[i .. i + function_name_len] });
                         i += function_name_len;
                     },
                     .VARIABLE_NAME => {
@@ -438,23 +438,23 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                             prefix = "\n";
                         }
 
-                        try std.fmt.format(writer, "{s}{x:0>4} // {s}\n", .{ prefix, op_code_pos, comment });
+                        try writer.print("{s}{x:0>4} // {s}\n", .{ prefix, op_code_pos, comment });
                         i += len;
                     },
                 }
             },
             .CONSTANT_I64 => {
                 const value = @as(*align(1) const i64, @ptrCast(code[i..(i + 8)])).*;
-                try std.fmt.format(writer, " {d}\n", .{value});
+                try writer.print(" {d}\n", .{value});
                 i += 8;
             },
             .CONSTANT_F64 => {
                 const value = @as(*align(1) const f64, @ptrCast(code[i..(i + 8)])).*;
-                try std.fmt.format(writer, " {d}\n", .{value});
+                try writer.print(" {d}\n", .{value});
                 i += 8;
             },
             .CONSTANT_BOOL => {
-                try std.fmt.format(writer, " {any}\n", .{code[i] == 1});
+                try writer.print(" {any}\n", .{code[i] == 1});
                 i += 1;
             },
             .CONSTANT_STRING => {
@@ -462,33 +462,33 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                 i += 4;
                 const header_end = header_start + 4;
                 const string_end = @as(u32, @bitCast(data[header_start..header_end][0..4].*));
-                try std.fmt.format(writer, " `{s}`\n", .{data[header_end..string_end]});
+                try writer.print(" `{s}`\n", .{data[header_end..string_end]});
             },
             .JUMP => {
                 const relative = @as(i16, @bitCast(code[i .. i + 2][0..2].*));
                 const target: u32 = @intCast(@as(i32, @intCast(i)) + relative);
-                try std.fmt.format(writer, " {x:0>4}\n", .{target});
+                try writer.print(" {x:0>4}\n", .{target});
                 i += 2;
             },
             .JUMP_IF_FALSE, .JUMP_IF_FALSE_POP => {
                 const relative = @as(i16, @bitCast(code[i .. i + 2][0..2].*));
                 const target: u32 = @intCast(@as(i32, @intCast(i)) + relative);
-                try std.fmt.format(writer, " {x:0>4}\n", .{target});
+                try writer.print(" {x:0>4}\n", .{target});
                 i += 2;
             },
             .GET_GLOBAL, .GET_LOCAL => {
                 const idx = @as(LocalIndex, @bitCast(code[i .. i + SL][0..SL].*));
-                try std.fmt.format(writer, " {s}@{d}\n", .{ variable_names.get(idx) orelse "", idx });
+                try writer.print(" {s}@{d}\n", .{ variable_names.get(idx) orelse "", idx });
                 i += SL;
             },
             .SET_GLOBAL, .SET_LOCAL => {
                 const idx = @as(LocalIndex, @bitCast(code[i .. i + SL][0..SL].*));
-                try std.fmt.format(writer, " {s}@{d}\n", .{ variable_names.get(idx) orelse "", idx });
+                try writer.print(" {s}@{d}\n", .{ variable_names.get(idx) orelse "", idx });
                 i += SL;
             },
             .PROPERTY_GET => {
                 const prop: Property = @enumFromInt(@as(u16, @bitCast(code[i .. i + 2][0..2].*)));
-                try std.fmt.format(writer, " {s}\n", .{@tagName(prop)});
+                try writer.print(" {s}\n", .{@tagName(prop)});
                 i += 2;
             },
             .METHOD => {
@@ -497,7 +497,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
 
                 const m: Method = @enumFromInt(@as(u16, @bitCast(code[i .. i + 2][0..2].*)));
                 i += 2;
-                try std.fmt.format(writer, " {s}({d})\n", .{ @tagName(m), arity });
+                try writer.print(" {s}({d})\n", .{ @tagName(m), arity });
             },
             .INCR_GLOBAL, .INCR_LOCAL => {
                 // i += 0 is pretty rare. So use value 0 for -1, which is more
@@ -506,7 +506,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                 i += 1;
                 const idx = @as(LocalIndex, @bitCast(code[i .. i + SL][0..SL].*));
                 i += SL;
-                try std.fmt.format(writer, " {s}@{d} {d}\n", .{ variable_names.get(idx) orelse "", idx, value });
+                try writer.print(" {s}@{d} {d}\n", .{ variable_names.get(idx) orelse "", idx, value });
             },
             .INITIALIZE => {
                 const initialize_type: OpCode.Initialize = @enumFromInt(code[i]);
@@ -514,7 +514,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                 switch (initialize_type) {
                     .ARRAY, .MAP => {
                         const value_count: u32 = @bitCast(code[i .. i + 4][0..4].*);
-                        try std.fmt.format(writer, " {s} {d}\n", .{ @tagName(initialize_type), value_count });
+                        try writer.print(" {s} {d}\n", .{ @tagName(initialize_type), value_count });
                         i += 4;
                     },
                 }
@@ -522,7 +522,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
             .POP => {
                 const count = code[i];
                 i += 1;
-                try std.fmt.format(writer, " {d}\n", .{count});
+                try writer.print(" {d}\n", .{count});
             },
             .CALL_ZIG => {
                 const arity = code[i];
@@ -532,7 +532,7 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                 i += 2;
 
                 const name = @tagName(@as(ztl.Functions(App), @enumFromInt(function_id)));
-                try std.fmt.format(writer, " {s}({d})\n", .{ name, arity });
+                try writer.print(" {s}({d})\n", .{ name, arity });
             },
             .CALL => {
                 const header_start = @as(u32, @bitCast(code[i .. i + 4][0..4].*));
@@ -541,13 +541,13 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                 const arity = data[header_start];
                 var d = data[header_start + 1 ..];
                 const jump: u32 = @bitCast(d[0..4].*);
-                try std.fmt.format(writer, " {d} {x:0>4}", .{ arity, jump });
+                try writer.print(" {d} {x:0>4}", .{ arity, jump });
                 if (comptime config.shouldDebug(App, .minimal)) {
                     d = d[4..];
                     const name_length = d[0];
-                    try std.fmt.format(writer, " ({s})", .{d[1 .. name_length + 1]});
+                    try writer.print(" ({s})", .{d[1 .. name_length + 1]});
                 }
-                try std.fmt.format(writer, "\n", .{});
+                try writer.print("\n", .{});
             },
             .FOREACH, .FOREACH_ITERATE => {
                 std.debug.print(" {d}\n", .{code[i]});
@@ -763,12 +763,13 @@ test "bytecode: functions debug full" {
 }
 
 fn expectDisassemble(comptime App: type, b: anytype, expected: []const u8) !void {
-    var arr = std.ArrayList(u8).init(t.allocator);
-    defer arr.deinit();
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
 
     const byte_code = try b.toBytes(t.allocator);
     defer t.allocator.free(byte_code);
 
-    try disassemble(App, t.allocator, byte_code, arr.writer());
-    try t.expectString(expected, arr.items);
+    try disassemble(App, t.allocator, byte_code, &aw.writer);
+
+    try t.expectString(expected, aw.written());
 }

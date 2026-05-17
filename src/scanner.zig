@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 pub const Scanner = struct {
     // currently only used for unescaping strings
-    scratch: std.ArrayListUnmanaged(u8),
+    scratch: std.ArrayList(u8),
 
     // where in src we are
     pos: u32 = 0,
@@ -19,7 +19,7 @@ pub const Scanner = struct {
         return .{
             .src = src,
             .arena = arena,
-            .scratch = .{},
+            .scratch = .empty,
         };
     }
 
@@ -410,13 +410,13 @@ pub const Token = union(enum) {
     VAR,
     WHILE,
 
-    pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Token, writer: *std.Io.Writer) !void {
         switch (self) {
             .AND => return writer.writeAll("and"),
             .BANG => return writer.writeAll("!"),
             .BANG_EQUAL => return writer.writeAll("!="),
             .BOF => return writer.writeAll("<bof>"),
-            .BOOLEAN => |v| try std.fmt.format(writer, "boolean '{any}'", .{v}),
+            .BOOLEAN => |v| try writer.print("boolean '{any}'", .{v}),
             .BREAK => return writer.writeAll("break"),
             .COLON => return writer.writeAll("colon"),
             .COMMA => return writer.writeAll("comma"),
@@ -427,15 +427,15 @@ pub const Token = union(enum) {
             .EOF => return writer.writeAll("<eof>"),
             .EQUAL => return writer.writeAll("="),
             .EQUAL_EQUAL => return writer.writeAll("=="),
-            .FLOAT => |v| try std.fmt.format(writer, "float '{d}'", .{v}),
+            .FLOAT => |v| try writer.print("float '{d}'", .{v}),
             .FN => return writer.writeAll("fn"),
             .FOR => return writer.writeAll("for"),
             .FOREACH => return writer.writeAll("foreach"),
             .GREATER => return writer.writeAll(">"),
             .GREATER_EQUAL => return writer.writeAll(">="),
-            .IDENTIFIER => |v| try std.fmt.format(writer, "identifier '{s}'", .{v}),
+            .IDENTIFIER => |v| try writer.print("identifier '{s}'", .{v}),
             .IF => return writer.writeAll("if"),
-            .INTEGER => |v| try std.fmt.format(writer, "integer '{any}'", .{v}),
+            .INTEGER => |v| try writer.print("integer '{any}'", .{v}),
             .LEFT_BRACE => return writer.writeAll("{"),
             .LEFT_BRACKET => return writer.writeAll("["),
             .LEFT_PARENTHESIS => return writer.writeAll("("),
@@ -464,7 +464,7 @@ pub const Token = union(enum) {
             .SEMICOLON => return writer.writeAll(";"),
             .SLASH => return writer.writeAll("\\"),
             .STAR => return writer.writeAll("*"),
-            .STRING => |v| try std.fmt.format(writer, "string '{s}'", .{v}),
+            .STRING => |v| try writer.print("string '{s}'", .{v}),
             .VAR => return writer.writeAll("var"),
             .WHILE => return writer.writeAll("while"),
         }
@@ -481,12 +481,10 @@ pub const Error = error {
     IdentifierTooLong
 };
 
-pub fn asUint(comptime string: anytype) @Type(std.builtin.Type{
-    .int = .{
-        .bits = @bitSizeOf(@TypeOf(string.*)) - 8, // (- 8) to exclude sentinel 0
-        .signedness = .unsigned,
-    },
-}) {
+pub fn asUint(comptime string: anytype) @Int(
+    .unsigned,
+    @bitSizeOf(@TypeOf(string.*)) - 8, // (- 8) to exclude sentinel 0
+) {
     const byteLength = @bitSizeOf(@TypeOf(string.*)) / 8 - 1;
     const expectedType = *const [byteLength:0]u8;
     if (@TypeOf(string) != expectedType) {

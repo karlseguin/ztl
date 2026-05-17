@@ -9,7 +9,7 @@ pub const Compile = struct {
     message: []const u8 = "",
     include_key: ?[]const u8 = null,
 
-    pub fn format(self: *const Compile, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: *const Compile, writer: *std.Io.Writer) !void {
         if (self.err) |se| {
             try writer.writeAll(@errorName(se));
             try writer.writeAll(" - ");
@@ -19,14 +19,14 @@ pub const Compile = struct {
             try writer.writeAll(" - ");
         }
 
-        try std.fmt.format(writer, "line {d}:\n", .{self.lineNumber()});
+        try writer.print("line {d}:\n", .{self.lineNumber()});
 
         try writer.writeAll(self.contextBefore(2));
         try writer.writeAll(self.line());
         try writer.writeByte('\n');
 
         const c = self.column();
-        try writer.writeBytesNTimes("-", c);
+        try writer.splatBytesAll("-", c);
         try writer.writeAll("^");
         try writer.writeAll(self.contextAfter(1));
 
@@ -110,7 +110,7 @@ pub const Render = struct {
         }
     }
 
-    pub fn format(self: *const Render, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: *const Render, writer: *std.Io.Writer) !void {
         if (self.err) |se| {
             try writer.writeAll(@errorName(se));
             try writer.writeAll(" - ");

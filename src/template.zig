@@ -490,14 +490,18 @@ fn testTemplateWithApp(comptime App: type, app: App, expected: []const u8, templ
     };
     // try tmpl.disassemble(std.io.getStdErr().writer());
 
-    var buf = std.ArrayList(u8).init(t.allocator);
-    defer buf.deinit();
-    tmpl.render(buf.writer(), args, .{}) catch |err| {
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
+    tmpl.render(&aw.writer, args, .{}) catch |err| {
         std.debug.print("==disassemble==\n", .{});
-        try tmpl.disassemble(std.io.getStdErr().writer());
+        var stderr_lock = std.debug.lockStderr(&.{});
+        defer std.debug.unlockStderr();
+
+        const stderr = stderr_lock.terminal().writer;
+        try tmpl.disassemble(stderr);
         return err;
     };
-    try t.expectString(expected, buf.items);
+    try t.expectString(expected, aw.written());
 }
 
 fn testTemplateError(expected: []const u8, template: []const u8) !void {
@@ -538,11 +542,11 @@ fn testTemplateFullError(expected: []const u8, template: []const u8) !void {
 
     var error_report = CompileErrorReport{};
     tmpl.compile(template, .{.error_report = &error_report}) catch {
-        var buf: std.ArrayListUnmanaged(u8) = .{};
-        defer buf.deinit(t.allocator);
+        var aw: std.Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
 
-        try std.fmt.format(buf.writer(t.allocator), "{}", .{error_report});
-        try t.expectString(expected, buf.items);
+        try aw.writer.print("{f}", .{error_report});
+        try t.expectString(expected, aw.written());
         return;
     };
     return error.NoError;
@@ -553,11 +557,11 @@ fn testTemplateRenderError(expected: []const u8, template: []const u8, args: any
     defer tmpl.deinit();
     try tmpl.compile(template, .{});
 
-    var buf = std.ArrayList(u8).init(t.allocator);
-    defer buf.deinit();
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
 
     var report = RenderErrorReport{};
-    tmpl.render(buf.writer(), args, .{ .error_report = &report }) catch {
+    tmpl.render(&aw.writer, args, .{ .error_report = &report }) catch {
         defer report.deinit();
         try t.expectString(expected, report.message);
         return;

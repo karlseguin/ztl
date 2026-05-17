@@ -20,30 +20,19 @@ pub fn Functions(comptime A: type) type {
     };
 
     if (App == void or @hasDecl(App, "ZtlFunctions") == false) {
-        return @Type(.{
-            .@"enum" = .{
-                .decls = &.{},
-                .tag_type = u8,
-                .fields = &.{.{ .name = "", .value = 0 }}, // HACK, std.meta.stringToEnum doesn't work on an empty enum, lol what?
-                .is_exhaustive = true,
-            },
-        });
+        return @Enum(u8, .exhaustive, &.{""}, &.{0}); // HACK, std.meta.stringToEnum doesn't work on an empty enum, lol what?
     }
     const declarations = std.meta.declarations(App.ZtlFunctions);
-    var fields: [declarations.len]std.builtin.Type.EnumField = undefined;
+
+    var names: [declarations.len][]const u8 = undefined;
+    var values: [declarations.len]u16 = undefined;
 
     for (declarations, 0..) |d, i| {
-        fields[i] = .{ .name = d.name, .value = i };
+        names[i] = d.name;
+        values[i] = i;
     }
 
-    // the type of the @"enum" tag is std.builtin.Type.Enum
-    // we use the type inference syntax, i.e. .{...}
-    return @Type(.{ .@"enum" = .{
-        .decls = &.{},
-        .tag_type = u16,
-        .fields = &fields,
-        .is_exhaustive = true,
-    } });
+    return @Enum(u16, .exhaustive, &names, &values);
 }
 
 const t = @import("t.zig");

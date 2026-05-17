@@ -95,15 +95,15 @@ pub fn Compiler(comptime A: type) type {
         // a stack of includes, used to track restoring the compiler/scanner state
         // after the include is included, as well as the src/name of the include
         // for error reporting purposes
-        includes: std.ArrayListUnmanaged(Include),
+        includes: std.ArrayList(Include),
 
         functions: std.StringHashMapUnmanaged(Function),
-        function_calls: std.ArrayListUnmanaged(Function.Call),
+        function_calls: std.ArrayList(Function.Call),
 
         // Used to track the scope that we're in
         // Also assigned to a local to determine in what scope the local can be used
-        scopes: std.ArrayListUnmanaged(Scope),
-        locals: std.ArrayListUnmanaged(Local),
+        scopes: std.ArrayList(Scope),
+        locals: std.ArrayList(Local),
 
         // list of @global variables
         globals: std.StringHashMapUnmanaged(usize),
@@ -128,15 +128,15 @@ pub fn Compiler(comptime A: type) type {
                 .app = app,
                 .err = null,
                 .opts = opts,
-                .scopes = .{},
-                .locals = .{},
-                .globals = .{},
-                .includes = .{},
-                .functions = .{},
+                .scopes = .empty,
+                .locals = .empty,
+                .globals = .empty,
+                .includes = .empty,
+                .functions = .empty,
                 .mode = .literal,
                 .arena = allocator,
-                .function_calls = .{},
-                .string_literals = .{},
+                .function_calls = .empty,
+                .string_literals = .empty,
                 .global_mode = .normal,
                 .jumper = Jumper(A).init(allocator),
                 .writer = try ByteCode(A).init(allocator),
@@ -396,7 +396,7 @@ pub fn Compiler(comptime A: type) type {
                 if (idx == end) {
                     var lit = src[start..];
                     if (self.mode == .literal_strip_left) {
-                        lit = std.mem.trimLeft(u8, lit, &std.ascii.whitespace);
+                        lit = std.mem.trimStart(u8, lit, &std.ascii.whitespace);
                     }
                     if (lit.len > 0) {
                         _ = try writer.string(lit);
@@ -419,7 +419,7 @@ pub fn Compiler(comptime A: type) type {
 
                     var lit = src[start..idx];
                     if (self.mode == .literal_strip_left) {
-                        lit = std.mem.trimLeft(u8, lit, &std.ascii.whitespace);
+                        lit = std.mem.trimStart(u8, lit, &std.ascii.whitespace);
                         self.mode = .literal;
                     }
                     if (lit.len > 0) {
@@ -438,11 +438,11 @@ pub fn Compiler(comptime A: type) type {
                 if (next == '-' and pos != end) {
                     pos += 1;
                     next = src[pos];
-                    lit = std.mem.trimRight(u8, lit, &std.ascii.whitespace);
+                    lit = std.mem.trimEnd(u8, lit, &std.ascii.whitespace);
                 }
 
                 if (self.mode == .literal_strip_left) {
-                    lit = std.mem.trimLeft(u8, lit, &std.ascii.whitespace);
+                    lit = std.mem.trimStart(u8, lit, &std.ascii.whitespace);
                     self.mode = .literal;
                 }
 
@@ -1158,7 +1158,7 @@ pub fn Compiler(comptime A: type) type {
                         .IDENTIFIER => |k| try self.stringLiteral(k),
                         .STRING => |k| try self.stringLiteral(k),
                         else => {
-                            try self.setErrorFmt("Map key must be an integer, string or identifier, got {} ({s})", .{ current_token, @tagName(current_token) });
+                            try self.setErrorFmt("Map key must be an integer, string or identifier, got {f} ({s})", .{ current_token, @tagName(current_token) });
                             return error.InvalidMapKeyType;
 
                         },
@@ -1545,7 +1545,7 @@ pub fn Compiler(comptime A: type) type {
 
         fn setExpectationError(self: *Self, comptime message: []const u8) Error!void {
             const current_token = self.current;
-            return self.setErrorFmt("Expected " ++ message ++ ", got {} ({s})", .{ current_token, @tagName(current_token) });
+            return self.setErrorFmt("Expected " ++ message ++ ", got {f} ({s})", .{ current_token, @tagName(current_token) });
         }
 
         fn setErrorMaxArity(self: *Self, name: []const u8) !void {
@@ -1691,21 +1691,21 @@ fn Jumper(comptime App: type) type {
         //   every new for/while adds a new entry
         //   The inner lists is because 1 loop can have multiple breaks
         //   so we potentially need to register/fill multiple JUMP locations
-        break_scopes: std.ArrayListUnmanaged(std.ArrayListUnmanaged(u32)),
+        break_scopes: std.ArrayList(std.ArrayList(u32)),
 
         // Same as breaks. In the case of a "while" loop, a continue will jump
         // back to the top of the loop. But in the case of a "for" loop, the
         // continue will jump forwards to the increment part of the loop (and
         // then jump back to the top)
-        continue_scopes: std.ArrayListUnmanaged(std.ArrayListUnmanaged(u32)),
+        continue_scopes: std.ArrayList(std.ArrayList(u32)),
 
         // For each scope, we record how deep we should pop on a break/continue
-        pop_depths: std.ArrayListUnmanaged(usize),
+        pop_depths: std.ArrayList(usize),
 
         const Self = @This();
 
         fn init(arena: Allocator) Self {
-            return .{ .arena = arena, .pop_depths = .{}, .break_scopes = .{}, .continue_scopes = .{} };
+            return .{ .arena = arena, .pop_depths = .empty, .break_scopes = .empty, .continue_scopes = .empty };
         }
 
         fn forward(_: *const Self, compiler: *Compiler(App), op_code: OpCode) !Forward {
@@ -1730,8 +1730,8 @@ fn Jumper(comptime App: type) type {
         }
 
         fn newBreakableScope(self: *Self, compiler: *Compiler(App)) !BreakableScope {
-            try self.break_scopes.append(self.arena, .{});
-            try self.continue_scopes.append(self.arena, .{});
+            try self.break_scopes.append(self.arena, .empty);
+            try self.continue_scopes.append(self.arena, .empty);
             try self.pop_depths.append(self.arena, compiler.scopeDepth());
             return .{
                 .jumper = self,
@@ -1747,7 +1747,7 @@ fn Jumper(comptime App: type) type {
             return self.recordBreakable(compiler, levels, self.continue_scopes.items, "continue");
         }
 
-        fn recordBreakable(self: *Self, compiler: *Compiler(App), levels: usize, list: []std.ArrayListUnmanaged(u32), comptime op: []const u8) !void {
+        fn recordBreakable(self: *Self, compiler: *Compiler(App), levels: usize, list: []std.ArrayList(u32), comptime op: []const u8) !void {
             const pop_depths = self.pop_depths.items;
             if (levels > pop_depths.len) {
                 if (pop_depths.len == 0) {
@@ -3672,7 +3672,7 @@ fn testReturnValueWithApp(comptime App: type, app: App, expected: Value, comptim
         var error_report = ztl.CompileErrorReport{};
         var c = try Compiler(App).init(allocator, app, .{.error_report = &error_report});
         c.compile("<% " ++ src ++ "%>") catch |err| {
-            std.debug.print("Compilation error: {any}\n{}\n", .{err, error_report});
+            std.debug.print("Compilation error: {any}\n{f}\n", .{err, error_report});
             return err;
         };
         break :blk try c.writer.toBytes(allocator);
@@ -3682,13 +3682,17 @@ fn testReturnValueWithApp(comptime App: type, app: App, expected: Value, comptim
 
     var vm = ztl.VM(App).init(allocator, app);
 
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    const value = vm.run(byte_code, buf.writer(t.allocator)) catch |err| {
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    const value = vm.run(byte_code, &aw.writer) catch |err| {
         std.debug.print("{any}", .{err});
         if (vm.err) |e| {
             std.debug.print("{any} {s}\n", .{ err, e });
         }
-        disassemble(App, allocator, byte_code, std.io.getStdErr().writer()) catch unreachable;
+        var stderr_lock = std.debug.lockStderr(&.{});
+        defer std.debug.unlockStderr();
+
+        const stderr = stderr_lock.terminal().writer;
+        disassemble(App, allocator, byte_code, stderr) catch unreachable;
         return err;
     };
 
@@ -3710,12 +3714,12 @@ fn testErrorWithApp(comptime App: type, app: App, expected: []const u8, comptime
     var c = Compiler(App).init(t.arena.allocator(), app, .{.error_report = &error_report}) catch unreachable;
 
     c.compile("<% " ++ src ++ " %>") catch {
-        var buf = std.ArrayListUnmanaged(u8){};
-        defer buf.deinit(t.allocator);
+        var aw: std.Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
 
-        try std.fmt.format(buf.writer(t.allocator), "{}", .{error_report});
-        if (std.mem.indexOf(u8, buf.items, expected) == null) {
-            std.debug.print("Wrong error\nexpected: '{s}'\nactual:   '{s}'\n", .{ expected, buf.items});
+        try aw.writer.print("{f}", .{error_report});
+        if (std.mem.indexOf(u8, aw.written(), expected) == null) {
+            std.debug.print("Wrong error\nexpected: '{s}'\nactual:   '{s}'\n", .{ expected, aw.written()});
             return error.WrongError;
         }
         return;
@@ -3732,7 +3736,7 @@ fn testRuntimeError(expected: []const u8, comptime src: []const u8) !void {
     var error_report = ztl.CompileErrorReport{};
     var c = try Compiler(void).init(t.arena.allocator(), {}, .{.error_report = &error_report});
     c.compile("<% " ++ src ++ " %>") catch |err| {
-        std.debug.print("Compilation error: {any}\n{}\n", .{err, error_report});
+        std.debug.print("Compilation error: {any}\n{f}\n", .{err, error_report});
         return err;
     };
 
@@ -3745,9 +3749,9 @@ fn testRuntimeError(expected: []const u8, comptime src: []const u8) !void {
     var vm = ztl.VM(void).init(arena.allocator(), {});
     try checkVMForLeaks(&vm);
 
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(t.allocator);
-    _ = vm.run(byte_code, buf.writer(t.allocator)) catch {
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
+    _ = vm.run(byte_code, &aw.writer) catch {
         if (std.mem.indexOf(u8, vm.err.?, expected) == null) {
             std.debug.print("Wrong error, expected: {s} but got:\n{s}\n", .{ expected, vm.err.? });
             return error.WrongError;
