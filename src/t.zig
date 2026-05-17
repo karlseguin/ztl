@@ -19,7 +19,7 @@ pub fn reset() void {
 
 pub fn createListRef(values: []Value) Value {
     const ref = arena.allocator().create(Value.Ref) catch unreachable;
-    ref.* = .{ .value = .{ .list = .{ .items = values, .capacity = 0 } } };
+    ref.* = .{ .value = .{ .list = .fromOwnedSlice(values) } };
     return .{ .ref = ref };
 }
 
