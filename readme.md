@@ -9,7 +9,8 @@ const Product = struct {
 };
 
 pub fn main() !void {
-    var gpa = std.heap.GeneralPurposeAllocator(.{}){};
+    var gpa: std.heap.DebugAllocator(.{}) = .init;
+    defer _ = gpa.deinit();
     const allocator = gpa.allocator();
 
     var template = ztl.Template(void).init(allocator, {});
@@ -23,7 +24,7 @@ pub fn main() !void {
         \\ <% foreach (@products) |product| { -%>
         \\     <%= escape product["name"] %>
         \\ <% } %>
-    , .{.error_report = &compile_error_report}) catch |err| {
+    , .{ .error_report = &compile_error_report }) catch |err| {
         std.debug.print("{}\n", .{compile_error_report});
         return err;
     };
@@ -34,12 +35,12 @@ pub fn main() !void {
     var render_error_report = ztl.RenderErrorReport{};
 
     // The render method is thread-safe.
-    template.render(buf.writer(), .{
+    template.render(&aw.writer, .{
         .products = [_]Product{
-            .{.name = "Keemun"},
-            .{.name = "Silver Needle"},
-        }
-    }, .{.error_report = &render_error_report}) catch |err| {
+            .{ .name = "Keemun" },
+            .{ .name = "Silver Needle" },
+        },
+    }, .{ .error_report = &render_error_report }) catch |err| {
         defer render_error_report.deinit();
         std.debug.print("{}\n", .{render_error_report});
         return err;
