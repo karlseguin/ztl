@@ -37,10 +37,10 @@ pub fn Compiler(comptime A: type) type {
 
         const valid_parameters = blk: {
             if (params.len == 4) {
-                break :blk  params[0].type.? == A and
-                            params[1].type.? == Allocator and
-                            params[2].type.? == []const u8 and
-                            params[3].type.? == []const u8;
+                break :blk params[0].type.? == A and
+                    params[1].type.? == Allocator and
+                    params[2].type.? == []const u8 and
+                    params[3].type.? == []const u8;
             }
             break :blk false;
         };
@@ -95,15 +95,15 @@ pub fn Compiler(comptime A: type) type {
         // a stack of includes, used to track restoring the compiler/scanner state
         // after the include is included, as well as the src/name of the include
         // for error reporting purposes
-        includes: std.ArrayListUnmanaged(Include),
+        includes: std.ArrayList(Include),
 
         functions: std.StringHashMapUnmanaged(Function),
-        function_calls: std.ArrayListUnmanaged(Function.Call),
+        function_calls: std.ArrayList(Function.Call),
 
         // Used to track the scope that we're in
         // Also assigned to a local to determine in what scope the local can be used
-        scopes: std.ArrayListUnmanaged(Scope),
-        locals: std.ArrayListUnmanaged(Local),
+        scopes: std.ArrayList(Scope),
+        locals: std.ArrayList(Local),
 
         // list of @global variables
         globals: std.StringHashMapUnmanaged(usize),
@@ -123,20 +123,24 @@ pub fn Compiler(comptime A: type) type {
         const Self = @This();
 
         // we expect allocator to be an arena
-        pub fn init(allocator: Allocator, app: A, opts: Opts,) !Self {
+        pub fn init(
+            allocator: Allocator,
+            app: A,
+            opts: Opts,
+        ) !Self {
             return .{
                 .app = app,
                 .err = null,
                 .opts = opts,
-                .scopes = .{},
-                .locals = .{},
-                .globals = .{},
-                .includes = .{},
-                .functions = .{},
+                .scopes = .empty,
+                .locals = .empty,
+                .globals = .empty,
+                .includes = .empty,
+                .functions = .empty,
                 .mode = .literal,
                 .arena = allocator,
-                .function_calls = .{},
-                .string_literals = .{},
+                .function_calls = .empty,
+                .string_literals = .empty,
                 .global_mode = .normal,
                 .jumper = Jumper(A).init(allocator),
                 .writer = try ByteCode(A).init(allocator),
@@ -217,7 +221,7 @@ pub fn Compiler(comptime A: type) type {
         }
 
         fn consumeSemicolon(self: *Self, allow_close_tag: bool) !void {
-            if (try self.match(.SEMICOLON))  {
+            if (try self.match(.SEMICOLON)) {
                 return;
             }
             if (allow_close_tag) {
@@ -280,7 +284,7 @@ pub fn Compiler(comptime A: type) type {
                     }
                     try self.writer.op(op_code);
                 },
-                .code =>  switch (self.current) {
+                .code => switch (self.current) {
                     .PERCENT_GREATER => {
                         self.mode = .literal;
                         return;
@@ -373,7 +377,7 @@ pub fn Compiler(comptime A: type) type {
                         }
                     },
                     else => return self.statement(),
-                }
+                },
             }
         }
 
@@ -396,7 +400,7 @@ pub fn Compiler(comptime A: type) type {
                 if (idx == end) {
                     var lit = src[start..];
                     if (self.mode == .literal_strip_left) {
-                        lit = std.mem.trimLeft(u8, lit, &std.ascii.whitespace);
+                        lit = std.mem.trimStart(u8, lit, &std.ascii.whitespace);
                     }
                     if (lit.len > 0) {
                         _ = try writer.string(lit);
@@ -419,7 +423,7 @@ pub fn Compiler(comptime A: type) type {
 
                     var lit = src[start..idx];
                     if (self.mode == .literal_strip_left) {
-                        lit = std.mem.trimLeft(u8, lit, &std.ascii.whitespace);
+                        lit = std.mem.trimStart(u8, lit, &std.ascii.whitespace);
                         self.mode = .literal;
                     }
                     if (lit.len > 0) {
@@ -431,18 +435,18 @@ pub fn Compiler(comptime A: type) type {
                     continue;
                 }
 
-                var lit = src[start..idx - 1];
+                var lit = src[start .. idx - 1];
                 // skip the %
                 pos = idx + 1;
 
                 if (next == '-' and pos != end) {
                     pos += 1;
                     next = src[pos];
-                    lit = std.mem.trimRight(u8, lit, &std.ascii.whitespace);
+                    lit = std.mem.trimEnd(u8, lit, &std.ascii.whitespace);
                 }
 
                 if (self.mode == .literal_strip_left) {
-                    lit = std.mem.trimLeft(u8, lit, &std.ascii.whitespace);
+                    lit = std.mem.trimStart(u8, lit, &std.ascii.whitespace);
                     self.mode = .literal;
                 }
 
@@ -803,12 +807,12 @@ pub fn Compiler(comptime A: type) type {
                             return error.PartialsNotConfigured;
                         }
 
-                       const include_key = switch (self.current) {
+                        const include_key = switch (self.current) {
                             .STRING => |str| str,
                             else => {
                                 try self.setExpectationError("partial name (a string literal)");
                                 return error.Invalid;
-                            }
+                            },
                         };
 
                         for (self.includes.items) |incl| {
@@ -843,7 +847,7 @@ pub fn Compiler(comptime A: type) type {
 
                         // Ask the app for the include source
                         const result = self.app.partial(self.arena, self.opts.key, include_key) catch |err| {
-                            try self.setErrorFmt("Failed to load partial: '{s}'. Load Error: {}", .{include_key, err});
+                            try self.setErrorFmt("Failed to load partial: '{s}'. Load Error: {}", .{ include_key, err });
                             return error.PartialLoadError;
                         } orelse {
                             try self.setErrorFmt("Unknown partial: '{s}'", .{include_key});
@@ -856,7 +860,7 @@ pub fn Compiler(comptime A: type) type {
                         try self.beginInclude(include_key, result.src);
 
                         try self.beginScope(false);
-                        try self.locals.append(self.arena, .{.name = include_fn_name, .depth = 0});
+                        try self.locals.append(self.arena, .{ .name = include_fn_name, .depth = 0 });
                         gop.value_ptr.* = try self.newFunction(include_fn_name);
                         try writer.beginFunction(include_fn_name);
 
@@ -1158,9 +1162,8 @@ pub fn Compiler(comptime A: type) type {
                         .IDENTIFIER => |k| try self.stringLiteral(k),
                         .STRING => |k| try self.stringLiteral(k),
                         else => {
-                            try self.setErrorFmt("Map key must be an integer, string or identifier, got {} ({s})", .{ current_token, @tagName(current_token) });
+                            try self.setErrorFmt("Map key must be an integer, string or identifier, got {f} ({s})", .{ current_token, @tagName(current_token) });
                             return error.InvalidMapKeyType;
-
                         },
                     }
                     try self.advance();
@@ -1508,8 +1511,8 @@ pub fn Compiler(comptime A: type) type {
 
             self.scanner.reset(src);
             self.mode = .literal;
-            self.previous = .{.BOF = {}};
-            self.current = .{.BOF = {}};
+            self.previous = .{ .BOF = {} };
+            self.current = .{ .BOF = {} };
             self.global_mode = .include;
         }
 
@@ -1545,7 +1548,7 @@ pub fn Compiler(comptime A: type) type {
 
         fn setExpectationError(self: *Self, comptime message: []const u8) Error!void {
             const current_token = self.current;
-            return self.setErrorFmt("Expected " ++ message ++ ", got {} ({s})", .{ current_token, @tagName(current_token) });
+            return self.setErrorFmt("Expected " ++ message ++ ", got {f} ({s})", .{ current_token, @tagName(current_token) });
         }
 
         fn setErrorMaxArity(self: *Self, name: []const u8) !void {
@@ -1567,9 +1570,9 @@ pub fn Compiler(comptime A: type) type {
 }
 
 const Mode = enum {
-    code,     // <% ... %>
-    output,   // <%= ... %>
-    literal,  // everything NOT in the above
+    code, // <% ... %>
+    output, // <%= ... %>
+    literal, // everything NOT in the above
     literal_strip_left,
 };
 
@@ -1691,21 +1694,21 @@ fn Jumper(comptime App: type) type {
         //   every new for/while adds a new entry
         //   The inner lists is because 1 loop can have multiple breaks
         //   so we potentially need to register/fill multiple JUMP locations
-        break_scopes: std.ArrayListUnmanaged(std.ArrayListUnmanaged(u32)),
+        break_scopes: std.ArrayList(std.ArrayList(u32)),
 
         // Same as breaks. In the case of a "while" loop, a continue will jump
         // back to the top of the loop. But in the case of a "for" loop, the
         // continue will jump forwards to the increment part of the loop (and
         // then jump back to the top)
-        continue_scopes: std.ArrayListUnmanaged(std.ArrayListUnmanaged(u32)),
+        continue_scopes: std.ArrayList(std.ArrayList(u32)),
 
         // For each scope, we record how deep we should pop on a break/continue
-        pop_depths: std.ArrayListUnmanaged(usize),
+        pop_depths: std.ArrayList(usize),
 
         const Self = @This();
 
         fn init(arena: Allocator) Self {
-            return .{ .arena = arena, .pop_depths = .{}, .break_scopes = .{}, .continue_scopes = .{} };
+            return .{ .arena = arena, .pop_depths = .empty, .break_scopes = .empty, .continue_scopes = .empty };
         }
 
         fn forward(_: *const Self, compiler: *Compiler(App), op_code: OpCode) !Forward {
@@ -1730,8 +1733,8 @@ fn Jumper(comptime App: type) type {
         }
 
         fn newBreakableScope(self: *Self, compiler: *Compiler(App)) !BreakableScope {
-            try self.break_scopes.append(self.arena, .{});
-            try self.continue_scopes.append(self.arena, .{});
+            try self.break_scopes.append(self.arena, .empty);
+            try self.continue_scopes.append(self.arena, .empty);
             try self.pop_depths.append(self.arena, compiler.scopeDepth());
             return .{
                 .jumper = self,
@@ -1747,7 +1750,7 @@ fn Jumper(comptime App: type) type {
             return self.recordBreakable(compiler, levels, self.continue_scopes.items, "continue");
         }
 
-        fn recordBreakable(self: *Self, compiler: *Compiler(App), levels: usize, list: []std.ArrayListUnmanaged(u32), comptime op: []const u8) !void {
+        fn recordBreakable(self: *Self, compiler: *Compiler(App), levels: usize, list: []std.ArrayList(u32), comptime op: []const u8) !void {
             const pop_depths = self.pop_depths.items;
             if (levels > pop_depths.len) {
                 if (pop_depths.len == 0) {
@@ -3574,11 +3577,11 @@ test "Compiler: method concat" {
 
 test "Compiler: method toString" {
     try testError("Function 'toString' expects 0 parameters, but called with 2", "return [].toString('', 0)");
-    try testReturnValue(.{.string = "abc"}, "return 'abc'.toString(); ");
-    try testReturnValue(.{.string = "123aabz"}, "return '123aabz'.toString().toString(); ");
-    try testReturnValue(.{.string = "3"}, "return 3.toString(); ");
-    try testReturnValue(.{.string = "false"}, "return false.toString(); ");
-    try testReturnValue(.{.string = "[1, 2, 3]"}, "return [1,2,3].toString(); ");
+    try testReturnValue(.{ .string = "abc" }, "return 'abc'.toString(); ");
+    try testReturnValue(.{ .string = "123aabz" }, "return '123aabz'.toString().toString(); ");
+    try testReturnValue(.{ .string = "3" }, "return 3.toString(); ");
+    try testReturnValue(.{ .string = "false" }, "return false.toString(); ");
+    try testReturnValue(.{ .string = "[1, 2, 3]" }, "return [1,2,3].toString(); ");
 }
 
 test "Compiler: partial" {
@@ -3601,15 +3604,15 @@ test "Compiler: partial" {
             }
 
             if (std.mem.eql(u8, include_key, "incl_dbl")) {
-                return .{.src = "<% fn dbl(a) { return a * 2; } %>"};
+                return .{ .src = "<% fn dbl(a) { return a * 2; } %>" };
             }
 
             if (std.mem.eql(u8, include_key, "recursive_1")) {
-                return .{.src = "<% @include('recursive_2') %>"};
+                return .{ .src = "<% @include('recursive_2') %>" };
             }
 
             if (std.mem.eql(u8, include_key, "recursive_2")) {
-                return .{.src = "<% @include('recursive_1') %>"};
+                return .{ .src = "<% @include('recursive_1') %>" };
             }
 
             return null;
@@ -3636,7 +3639,7 @@ test "Compiler: partial" {
         \\ @include("recursive_1");
     );
 
-    try testReturnValueWithApp(App, .{}, .{.i64 = 12350},
+    try testReturnValueWithApp(App, .{}, .{ .i64 = 12350 },
         \\ @include("incl_dbl");
         \\ return dbl(6175);
     );
@@ -3670,9 +3673,9 @@ fn testReturnValueWithApp(comptime App: type, app: App, expected: Value, comptim
 
     const byte_code = blk: {
         var error_report = ztl.CompileErrorReport{};
-        var c = try Compiler(App).init(allocator, app, .{.error_report = &error_report});
+        var c = try Compiler(App).init(allocator, app, .{ .error_report = &error_report });
         c.compile("<% " ++ src ++ "%>") catch |err| {
-            std.debug.print("Compilation error: {any}\n{}\n", .{err, error_report});
+            std.debug.print("Compilation error: {any}\n{f}\n", .{ err, error_report });
             return err;
         };
         break :blk try c.writer.toBytes(allocator);
@@ -3682,13 +3685,18 @@ fn testReturnValueWithApp(comptime App: type, app: App, expected: Value, comptim
 
     var vm = ztl.VM(App).init(allocator, app);
 
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    const value = vm.run(byte_code, buf.writer(t.allocator)) catch |err| {
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
+    const value = vm.run(byte_code, &aw.writer) catch |err| {
         std.debug.print("{any}", .{err});
         if (vm.err) |e| {
             std.debug.print("{any} {s}\n", .{ err, e });
         }
-        disassemble(App, allocator, byte_code, std.io.getStdErr().writer()) catch unreachable;
+        var stderr_lock = std.debug.lockStderr(&.{});
+        defer std.debug.unlockStderr();
+
+        const stderr = stderr_lock.terminal().writer;
+        disassemble(App, allocator, byte_code, stderr) catch unreachable;
         return err;
     };
 
@@ -3707,15 +3715,15 @@ fn testError(expected: []const u8, comptime src: []const u8) !void {
 
 fn testErrorWithApp(comptime App: type, app: App, expected: []const u8, comptime src: []const u8) !void {
     var error_report = ztl.CompileErrorReport{};
-    var c = Compiler(App).init(t.arena.allocator(), app, .{.error_report = &error_report}) catch unreachable;
+    var c = Compiler(App).init(t.arena.allocator(), app, .{ .error_report = &error_report }) catch unreachable;
 
     c.compile("<% " ++ src ++ " %>") catch {
-        var buf = std.ArrayListUnmanaged(u8){};
-        defer buf.deinit(t.allocator);
+        var aw: std.Io.Writer.Allocating = .init(t.allocator);
+        defer aw.deinit();
 
-        try std.fmt.format(buf.writer(t.allocator), "{}", .{error_report});
-        if (std.mem.indexOf(u8, buf.items, expected) == null) {
-            std.debug.print("Wrong error\nexpected: '{s}'\nactual:   '{s}'\n", .{ expected, buf.items});
+        try aw.writer.print("{f}", .{error_report});
+        if (std.mem.indexOf(u8, aw.written(), expected) == null) {
+            std.debug.print("Wrong error\nexpected: '{s}'\nactual:   '{s}'\n", .{ expected, aw.written() });
             return error.WrongError;
         }
         return;
@@ -3730,9 +3738,9 @@ fn testErrorWithApp(comptime App: type, app: App, expected: []const u8, comptime
 
 fn testRuntimeError(expected: []const u8, comptime src: []const u8) !void {
     var error_report = ztl.CompileErrorReport{};
-    var c = try Compiler(void).init(t.arena.allocator(), {}, .{.error_report = &error_report});
+    var c = try Compiler(void).init(t.arena.allocator(), {}, .{ .error_report = &error_report });
     c.compile("<% " ++ src ++ " %>") catch |err| {
-        std.debug.print("Compilation error: {any}\n{}\n", .{err, error_report});
+        std.debug.print("Compilation error: {any}\n{f}\n", .{ err, error_report });
         return err;
     };
 
@@ -3745,9 +3753,9 @@ fn testRuntimeError(expected: []const u8, comptime src: []const u8) !void {
     var vm = ztl.VM(void).init(arena.allocator(), {});
     try checkVMForLeaks(&vm);
 
-    var buf: std.ArrayListUnmanaged(u8) = .{};
-    defer buf.deinit(t.allocator);
-    _ = vm.run(byte_code, buf.writer(t.allocator)) catch {
+    var aw: std.Io.Writer.Allocating = .init(t.allocator);
+    defer aw.deinit();
+    _ = vm.run(byte_code, &aw.writer) catch {
         if (std.mem.indexOf(u8, vm.err.?, expected) == null) {
             std.debug.print("Wrong error, expected: {s} but got:\n{s}\n", .{ expected, vm.err.? });
             return error.WrongError;

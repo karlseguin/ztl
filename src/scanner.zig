@@ -4,7 +4,7 @@ const Allocator = std.mem.Allocator;
 
 pub const Scanner = struct {
     // currently only used for unescaping strings
-    scratch: std.ArrayListUnmanaged(u8),
+    scratch: std.ArrayList(u8),
 
     // where in src we are
     pos: u32 = 0,
@@ -19,10 +19,9 @@ pub const Scanner = struct {
         return .{
             .src = src,
             .arena = arena,
-            .scratch = .{},
+            .scratch = .empty,
         };
     }
-
 
     pub fn reset(self: *Scanner, src: []const u8) void {
         self.src = src;
@@ -30,7 +29,7 @@ pub const Scanner = struct {
         self.scratch.clearRetainingCapacity();
     }
 
-   // Used by our caller to figure out the position of the next token
+    // Used by our caller to figure out the position of the next token
     // might as well use this opportunity to skip the whitespace with respect
     // to our self.pos;
     pub fn skipSpaces(self: *Scanner) u32 {
@@ -57,60 +56,60 @@ pub const Scanner = struct {
             const start = pos;
             pos += 1;
             switch (b) {
-                '{' => return .{.LEFT_BRACE = {}},
-                '}' => return .{.RIGHT_BRACE = {}},
-                '[' => return .{.LEFT_BRACKET = {}},
-                ']' => return .{.RIGHT_BRACKET = {}},
-                '(' => return .{.LEFT_PARENTHESIS = {}},
-                ')' => return .{.RIGHT_PARENTHESIS = {}},
-                '|' => return .{.PIPE = {}},
-                ',' => return .{.COMMA = {}},
-                '.' => return .{.DOT = {}},
-                '$' => return .{.DOLLAR = {}},
-                '?' => return .{.QUESTION_MARK = {}},
+                '{' => return .{ .LEFT_BRACE = {} },
+                '}' => return .{ .RIGHT_BRACE = {} },
+                '[' => return .{ .LEFT_BRACKET = {} },
+                ']' => return .{ .RIGHT_BRACKET = {} },
+                '(' => return .{ .LEFT_PARENTHESIS = {} },
+                ')' => return .{ .RIGHT_PARENTHESIS = {} },
+                '|' => return .{ .PIPE = {} },
+                ',' => return .{ .COMMA = {} },
+                '.' => return .{ .DOT = {} },
+                '$' => return .{ .DOLLAR = {} },
+                '?' => return .{ .QUESTION_MARK = {} },
                 '%' => switch (self.at(pos)) {
                     '{' => {
                         pos += 1;
-                        return .{.PERCENT_BRACE = {}};
+                        return .{ .PERCENT_BRACE = {} };
                     },
                     '>' => {
                         pos += 1;
-                        return .{.PERCENT_GREATER = {}};
+                        return .{ .PERCENT_GREATER = {} };
                     },
-                    else => return .{.PERCENT = {}},
+                    else => return .{ .PERCENT = {} },
                 },
                 '+' => {
                     if (self.at(pos) == '+') {
                         pos += 1;
-                        return .{.PLUS_PLUS = {}};
+                        return .{ .PLUS_PLUS = {} };
                     }
                     if (self.at(pos) == '=') {
                         pos += 1;
-                        return .{.PLUS_EQUAL = {}};
+                        return .{ .PLUS_EQUAL = {} };
                     }
-                    return .{.PLUS = {}};
+                    return .{ .PLUS = {} };
                 },
                 '-' => {
                     if (self.at(pos) == '-') {
                         pos += 1;
-                        return .{.MINUS_MINUS = {}};
+                        return .{ .MINUS_MINUS = {} };
                     }
                     if (self.at(pos) == '=') {
                         pos += 1;
-                        return .{.MINUS_EQUAL = {}};
+                        return .{ .MINUS_EQUAL = {} };
                     }
                     if (self.at(pos) == '%' and self.at(pos + 1) == '>') {
                         pos += 2;
-                        return .{.MINUS_PERCENT_GREATER = {}};
+                        return .{ .MINUS_PERCENT_GREATER = {} };
                     }
-                    return .{.MINUS = {}};
+                    return .{ .MINUS = {} };
                 },
-                ':' => return .{.COLON = {}},
-                '*' => return .{.STAR = {}},
-                ';' => return .{.SEMICOLON = {}},
+                ':' => return .{ .COLON = {} },
+                '*' => return .{ .STAR = {} },
+                ';' => return .{ .SEMICOLON = {} },
                 '/' => {
                     if (self.at(pos) != '/') {
-                        return .{.SLASH = {}};
+                        return .{ .SLASH = {} };
                     }
                     while (pos < src.len) {
                         if (src[pos] != '\n') {
@@ -125,34 +124,34 @@ pub const Scanner = struct {
                 '!' => {
                     if (self.at(pos) == '=') {
                         pos += 1;
-                        return .{.BANG_EQUAL = {}};
+                        return .{ .BANG_EQUAL = {} };
                     }
-                    return .{.BANG = {}};
+                    return .{ .BANG = {} };
                 },
                 '=' => {
                     if (self.at(pos) == '=') {
                         pos += 1;
-                        return .{.EQUAL_EQUAL = {}};
+                        return .{ .EQUAL_EQUAL = {} };
                     }
-                    return .{.EQUAL = {}};
+                    return .{ .EQUAL = {} };
                 },
                 '>' => {
                     if (self.at(pos) == '=') {
                         pos += 1;
-                        return .{.GREATER_EQUAL = {}};
+                        return .{ .GREATER_EQUAL = {} };
                     }
-                    return .{.GREATER = {}};
+                    return .{ .GREATER = {} };
                 },
                 '<' => switch (self.at(pos)) {
                     '=' => {
                         pos += 1;
-                        return .{.LESSER_EQUAL = {}};
+                        return .{ .LESSER_EQUAL = {} };
                     },
                     '%' => {
                         pos += 1;
-                        return .{.LESSER_PERCENT = {}};
+                        return .{ .LESSER_PERCENT = {} };
                     },
-                    else => return .{.LESSER = {}},
+                    else => return .{ .LESSER = {} },
                 },
                 '0'...'9' => return self.number(&pos),
                 '"' => return self.string('"', &pos),
@@ -160,7 +159,7 @@ pub const Scanner = struct {
                 '`' => {
                     const end = std.mem.indexOfScalarPos(u8, src, pos, '`') orelse return error.UnterminatedString;
                     pos = @intCast(end + 1);
-                    return .{.STRING = src[start + 1 .. end]};
+                    return .{ .STRING = src[start + 1 .. end] };
                 },
                 'a'...'z', 'A'...'Z', '_', '@' => {
                     if (try self.identifier(&pos)) |token| {
@@ -173,7 +172,7 @@ pub const Scanner = struct {
             }
         }
 
-        return .{.EOF = {}};
+        return .{ .EOF = {} };
     }
 
     pub fn peek(self: *Scanner) Token {
@@ -250,7 +249,7 @@ pub const Scanner = struct {
             literal = try allocator.dupe(u8, scratch.items);
         }
 
-        return .{.STRING = literal};
+        return .{ .STRING = literal };
     }
 
     // scanner_pos points to the first byte after whatever byte triggered this
@@ -305,40 +304,40 @@ pub const Scanner = struct {
 
         switch (value.len) {
             2 => switch (@as(u16, @bitCast(value[0..2].*))) {
-                asUint("fn") => return .{.FN = {}},
-                asUint("if") => return .{.IF = {}},
-                asUint("or") => return .{.OR = {}},
+                asUint("fn") => return .{ .FN = {} },
+                asUint("if") => return .{ .IF = {} },
+                asUint("or") => return .{ .OR = {} },
                 else => {},
             },
             3 => switch (@as(u24, @bitCast(value[0..3].*))) {
-                asUint("var") => return .{.VAR = {}},
-                asUint("and") => return .{.AND = {}},
-                asUint("for") => return .{.FOR = {}},
+                asUint("var") => return .{ .VAR = {} },
+                asUint("and") => return .{ .AND = {} },
+                asUint("for") => return .{ .FOR = {} },
                 else => {},
             },
             4 => switch (@as(u32, @bitCast(value[0..4].*))) {
-                asUint("else") => return .{.ELSE = {}},
-                asUint("null") => return .{.NULL = {}},
-                asUint("true") => return .{.BOOLEAN = true},
+                asUint("else") => return .{ .ELSE = {} },
+                asUint("null") => return .{ .NULL = {} },
+                asUint("true") => return .{ .BOOLEAN = true },
                 else => {},
             },
             5 => switch (@as(u40, @bitCast(value[0..5].*))) {
-                asUint("false") => return .{.BOOLEAN = false},
-                asUint("while") => return .{.WHILE = {}},
-                asUint("break") => return .{.BREAK = {}},
+                asUint("false") => return .{ .BOOLEAN = false },
+                asUint("while") => return .{ .WHILE = {} },
+                asUint("break") => return .{ .BREAK = {} },
                 else => {},
             },
             6 => switch (@as(u48, @bitCast(value[0..6].*))) {
-                asUint("return") => return .{.RETURN = {}},
-                asUint("orelse") => return .{.ORELSE = {}},
+                asUint("return") => return .{ .RETURN = {} },
+                asUint("orelse") => return .{ .ORELSE = {} },
                 else => {},
             },
             7 => switch (@as(u56, @bitCast(value[0..7].*))) {
-                asUint("foreach") => return .{.FOREACH = {}},
+                asUint("foreach") => return .{ .FOREACH = {} },
                 else => {},
             },
             8 => switch (@as(u64, @bitCast(value[0..8].*))) {
-                asUint("continue") => return .{.CONTINUE = {}},
+                asUint("continue") => return .{ .CONTINUE = {} },
                 else => {},
             },
             else => {},
@@ -349,7 +348,7 @@ pub const Scanner = struct {
             return error.IdentifierTooLong;
         }
 
-        return .{.IDENTIFIER = value};
+        return .{ .IDENTIFIER = value };
     }
 };
 
@@ -410,13 +409,13 @@ pub const Token = union(enum) {
     VAR,
     WHILE,
 
-    pub fn format(self: Token, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    pub fn format(self: Token, writer: *std.Io.Writer) !void {
         switch (self) {
             .AND => return writer.writeAll("and"),
             .BANG => return writer.writeAll("!"),
             .BANG_EQUAL => return writer.writeAll("!="),
             .BOF => return writer.writeAll("<bof>"),
-            .BOOLEAN => |v| try std.fmt.format(writer, "boolean '{any}'", .{v}),
+            .BOOLEAN => |v| try writer.print("boolean '{any}'", .{v}),
             .BREAK => return writer.writeAll("break"),
             .COLON => return writer.writeAll("colon"),
             .COMMA => return writer.writeAll("comma"),
@@ -427,15 +426,15 @@ pub const Token = union(enum) {
             .EOF => return writer.writeAll("<eof>"),
             .EQUAL => return writer.writeAll("="),
             .EQUAL_EQUAL => return writer.writeAll("=="),
-            .FLOAT => |v| try std.fmt.format(writer, "float '{d}'", .{v}),
+            .FLOAT => |v| try writer.print("float '{d}'", .{v}),
             .FN => return writer.writeAll("fn"),
             .FOR => return writer.writeAll("for"),
             .FOREACH => return writer.writeAll("foreach"),
             .GREATER => return writer.writeAll(">"),
             .GREATER_EQUAL => return writer.writeAll(">="),
-            .IDENTIFIER => |v| try std.fmt.format(writer, "identifier '{s}'", .{v}),
+            .IDENTIFIER => |v| try writer.print("identifier '{s}'", .{v}),
             .IF => return writer.writeAll("if"),
-            .INTEGER => |v| try std.fmt.format(writer, "integer '{any}'", .{v}),
+            .INTEGER => |v| try writer.print("integer '{any}'", .{v}),
             .LEFT_BRACE => return writer.writeAll("{"),
             .LEFT_BRACKET => return writer.writeAll("["),
             .LEFT_PARENTHESIS => return writer.writeAll("("),
@@ -464,29 +463,19 @@ pub const Token = union(enum) {
             .SEMICOLON => return writer.writeAll(";"),
             .SLASH => return writer.writeAll("\\"),
             .STAR => return writer.writeAll("*"),
-            .STRING => |v| try std.fmt.format(writer, "string '{s}'", .{v}),
+            .STRING => |v| try writer.print("string '{s}'", .{v}),
             .VAR => return writer.writeAll("var"),
             .WHILE => return writer.writeAll("while"),
         }
     }
 };
 
-pub const Error = error {
-    OutOfMemory,
-    UnterminatedString,
-    UnexpectedCharacter,
-    InvalidFloat,
-    InvalidInteger,
-    InvalidEscapeSequence,
-    IdentifierTooLong
-};
+pub const Error = error{ OutOfMemory, UnterminatedString, UnexpectedCharacter, InvalidFloat, InvalidInteger, InvalidEscapeSequence, IdentifierTooLong };
 
-pub fn asUint(comptime string: anytype) @Type(std.builtin.Type{
-    .int = .{
-        .bits = @bitSizeOf(@TypeOf(string.*)) - 8, // (- 8) to exclude sentinel 0
-        .signedness = .unsigned,
-    },
-}) {
+pub fn asUint(comptime string: anytype) @Int(
+    .unsigned,
+    @bitSizeOf(@TypeOf(string.*)) - 8, // (- 8) to exclude sentinel 0
+) {
     const byteLength = @bitSizeOf(@TypeOf(string.*)) / 8 - 1;
     const expectedType = *const [byteLength:0]u8;
     if (@TypeOf(string) != expectedType) {
