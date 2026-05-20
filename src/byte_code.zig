@@ -110,6 +110,9 @@ pub fn ByteCode(comptime App: type) type {
 
         pub fn beginFunction(self: *Self, name: []const u8) !void {
             const fc = self.frame_count + 1;
+            if (fc >= self.frames.len) {
+                return error.MaxNestedFunctions;
+            }
             self.frames[fc] = .{};
             self.frame = &self.frames[fc];
             self.frame_count = fc;
@@ -760,6 +763,23 @@ test "bytecode: functions debug full" {
         \\0018 RETURN
         \\
     );
+}
+
+test "bytecode: beginFunction rejects exceeding nesting depth" {
+    defer t.reset();
+    const App = struct {
+        pub const ZtlConfig = struct {
+            pub const max_call_frames: u8 = 4;
+        };
+    };
+
+    var b = try ByteCode(App).init(t.arena.allocator());
+    b.beginScript();
+    // frames[0] is the script; nesting 1, 2, 3 are fine; 4 must be rejected.
+    try b.beginFunction("a");
+    try b.beginFunction("b");
+    try b.beginFunction("c");
+    try t.expectError(error.MaxNestedFunctions, b.beginFunction("d"));
 }
 
 fn expectDisassemble(comptime App: type, b: anytype, expected: []const u8) !void {

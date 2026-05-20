@@ -204,6 +204,9 @@ pub const Scanner = struct {
                 break;
             }
             if (c == '\\') {
+                if (pos + 1 >= src.len) {
+                    return error.UnterminatedString;
+                }
                 pos += 2;
                 escape_count += 1;
             } else {
@@ -211,7 +214,7 @@ pub const Scanner = struct {
             }
         }
 
-        if (pos == src.len) {
+        if (pos >= src.len) {
             return error.UnterminatedString;
         }
 

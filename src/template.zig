@@ -449,6 +449,76 @@ test "Template: nested function" {
     , .{});
 }
 
+// Regression coverage for previously-crashing or silently-wrong inputs.
+test "Template: division by zero" {
+    try testTemplateRenderError("Division by zero: 10 / 0", "<%= 10 / 0 %>", .{});
+    try testTemplateRenderError("Modulus by zero: 10 % 0", "<%= 10 % 0 %>", .{});
+    // f64 division by zero is well-defined (inf), still works
+    try testTemplate("inf", "<%= 1.0 / 0 %>", .{});
+}
+
+test "Template: integer overflow on negate" {
+    // Use a global to inject i64::MIN since the literal is impossible to write
+    try testTemplateRenderError("Integer overflow: cannot negate -9223372036854775808",
+        "<%= -@n %>",
+        .{ .n = std.math.minInt(i64) },
+    );
+}
+
+test "Template: non-boolean condition" {
+    try testTemplateRenderError("Condition must be a boolean, got an integer (1)",
+        \\<% if (1) { %>yes<% } %>
+    , .{});
+    try testTemplateRenderError("Condition must be a boolean, got a string (foo)",
+        \\<% if ('foo') { %>yes<% } %>
+    , .{});
+    try testTemplateRenderError("Condition must be a boolean, got null (null)",
+        \\<% if (null) { %>yes<% } %>
+    , .{});
+    // bools still work in conditions
+    try testTemplate("yes", "<% if (true) { %>yes<% } else { %>no<% } %>", .{});
+    try testTemplate("no", "<% if (false) { %>yes<% } else { %>no<% } %>", .{});
+}
+
+test "Template: scanner string backslash at EOF" {
+    // previously crashed with index out of bounds; should now report cleanly
+    try expectCompileErr(error.UnterminatedString, "<% \"abc\\");
+    try expectCompileErr(error.UnterminatedString, "<%= \"x\\");
+}
+
+test "Template: break/continue outside loop return correct error" {
+    try expectCompileErr(error.InvalidContinue, "<% continue; %>");
+    try expectCompileErr(error.InvalidBreak, "<% break; %>");
+    try expectCompileErr(error.InvalidContinueCount,
+        \\<% for (var i = 0; i < 1; i++) { continue 2; } %>
+    );
+    try expectCompileErr(error.InvalidBreakCount,
+        \\<% for (var i = 0; i < 1; i++) { break 2; } %>
+    );
+}
+
+test "Template: self-reference detected inside nested function scope" {
+    // Regression: localVariableIndex previously returned a scope-relative index
+    // but callers indexed self.locals with it, so the `depth == null` check
+    // looked at the wrong local when the function had any preceding script-level
+    // local. That made `var z = z + 1` compile and crash at runtime.
+    try expectCompileErr(error.VariableNotInitialized,
+        \\<% var z = 99;
+        \\   fn f() {
+        \\     var z = z + 1;
+        \\     return z;
+        \\   }
+        \\-%><%= f() %>
+    );
+}
+
+fn expectCompileErr(expected: anyerror, template: []const u8) !void {
+    var tmpl = Template(void).init(t.allocator, {});
+    defer tmpl.deinit();
+    const result = tmpl.compile(template, .{});
+    try t.expectError(expected, result);
+}
+
 fn testTemplate(expected: []const u8, template: []const u8, args: anytype) !void {
     const App = struct {
         pub fn partial(self: @This(), _: Allocator, template_key: []const u8, include_key: []const u8) !?ztl.PartialResult {

@@ -359,7 +359,12 @@ pub fn Compiler(comptime A: type) type {
                             }
                         }
 
-                        try writer.beginFunction(name);
+                        writer.beginFunction(name) catch |err| {
+                            if (err == error.MaxNestedFunctions) {
+                                try self.setErrorFmt("Function '{s}' exceeds the maximum function nesting depth", .{name});
+                            }
+                            return err;
+                        };
                         try self.block();
                         if (self.currentScope().has_return == false) {
                             try writer.null();
@@ -634,7 +639,7 @@ pub fn Compiler(comptime A: type) type {
                     }
 
                     if (iterable_count > 8) {
-                        self.setError("foreach cannot iterate over more tha 8 values");
+                        self.setError("foreach cannot iterate over more than 8 values");
                         return error.InvalidIterableCount;
                     }
 
@@ -862,7 +867,12 @@ pub fn Compiler(comptime A: type) type {
                         try self.beginScope(false);
                         try self.locals.append(self.arena, .{ .name = include_fn_name, .depth = 0 });
                         gop.value_ptr.* = try self.newFunction(include_fn_name);
-                        try writer.beginFunction(include_fn_name);
+                        writer.beginFunction(include_fn_name) catch |err| {
+                            if (err == error.MaxNestedFunctions) {
+                                try self.setErrorFmt("@include '{s}' exceeds the maximum function nesting depth", .{include_key});
+                            }
+                            return err;
+                        };
 
                         while (self.current != .EOF) {
                             try self.declaration();
@@ -1065,15 +1075,18 @@ pub fn Compiler(comptime A: type) type {
                     }
                 },
             } else {
-                idx = self.localVariableIndex(name) orelse {
+                const abs_idx = self.localVariableIndex(name) orelse {
                     try self.setErrorFmt("Variable '{s}' is unknown", .{name});
                     return error.UnknownVariable;
                 };
 
-                if (self.locals.items[idx].depth == null) {
+                if (self.locals.items[abs_idx].depth == null) {
                     try self.setErrorFmt("Variable '{s}' used before being initialized", .{name});
-                    return error.VaraibleNotInitialized;
+                    return error.VariableNotInitialized;
                 }
+
+                // bytecode operands are frame-relative
+                idx = abs_idx - self.currentScope().local_start;
             }
 
             if (can_assign) {
@@ -1413,6 +1426,9 @@ pub fn Compiler(comptime A: type) type {
             try jump_if_true.goto();
         }
 
+        // Returns the absolute index of `name` in self.locals (or null).
+        // Use `idx - self.currentScope().local_start` to get the frame-relative
+        // slot to emit in GET_LOCAL / SET_LOCAL opcodes.
         fn localVariableIndex(self: *const Self, name: []const u8) ?usize {
             const locals = self.locals.items;
             const local_scope_start = self.currentScope().local_start;
@@ -1421,7 +1437,7 @@ pub fn Compiler(comptime A: type) type {
                 idx -= 1;
                 const local = locals[idx];
                 if (std.mem.eql(u8, name, local.name)) {
-                    return idx - local_scope_start;
+                    return idx;
                 }
             }
 
@@ -1599,7 +1615,7 @@ pub const Error = error{
     InvalidBreak,
     InvalidBreakCount,
     UnknownVariable,
-    VaraibleNotInitialized,
+    VariableNotInitialized,
     InvalidMapKeyType,
     UnknownMethod,
     UnknownField,
@@ -1614,6 +1630,7 @@ pub const Error = error{
     PartialUnknown,
     IncludeLoopDetected,
     GlobalInFunction,
+    MaxNestedFunctions,
 } || @import("scanner.zig").Error;
 
 // For top-level functions we store a small function header in the bytecode's
@@ -1755,10 +1772,10 @@ fn Jumper(comptime App: type) type {
             if (levels > pop_depths.len) {
                 if (pop_depths.len == 0) {
                     compiler.setError("'" ++ op ++ "' cannot be used outside of loop");
-                    return if (comptime std.mem.eql(u8, op, "continue")) error.InvalidBreak else error.InvalidContinue;
+                    return if (comptime std.mem.eql(u8, op, "continue")) error.InvalidContinue else error.InvalidBreak;
                 }
                 try compiler.setErrorFmt("'" ++ op ++ " {d}' is invalid (current loop nesting: {d})", .{ levels, pop_depths.len });
-                return if (comptime std.mem.eql(u8, op, "continue")) error.InvalidBreakCount else error.InvalidContinueCount;
+                return if (comptime std.mem.eql(u8, op, "continue")) error.InvalidContinueCount else error.InvalidBreakCount;
             }
 
             // so we want to revert the scope by N levels. To figure this out,

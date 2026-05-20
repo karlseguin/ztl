@@ -210,7 +210,13 @@ pub fn VM(comptime App: type) type {
                     .NEGATE => {
                         var v = &stack.items[stack.items.len - 1];
                         switch (v.*) {
-                            .i64 => |n| v.i64 = -n,
+                            .i64 => |n| {
+                                if (n == std.math.minInt(i64)) {
+                                    try self.setErrorFmt("Integer overflow: cannot negate {d}", .{n});
+                                    return error.IntegerOverflow;
+                                }
+                                v.i64 = -n;
+                            },
                             .f64 => |n| v.f64 = -n,
                             else => {
                                 try self.setErrorFmt("Cannot negate non-numeric value: -{f}", .{v.*});
@@ -295,7 +301,12 @@ pub fn VM(comptime App: type) type {
                         }
                     },
                     .JUMP_IF_FALSE, .JUMP_IF_FALSE_POP => {
-                        if (stack.items[stack.items.len - 1].isTrue()) {
+                        const top = stack.items[stack.items.len - 1];
+                        if (top != .bool) {
+                            try self.setErrorFmt("Condition must be a boolean, got {s} ({f})", .{ top.friendlyArticleName(), top });
+                            return error.TypeError;
+                        }
+                        if (top.bool) {
                             // just skip the jump address
                             ip += 2;
                         } else {
@@ -558,6 +569,8 @@ pub fn VM(comptime App: type) type {
 
         const ArithmeticError = error{
             TypeError,
+            DivisionByZero,
+            IntegerOverflow,
             OutOfMemory,
         };
 
@@ -695,7 +708,13 @@ pub fn VM(comptime App: type) type {
         fn divide(self: *Self, left: Value, right: Value) ArithmeticError!Value {
             switch (left) {
                 .i64 => |l| switch (right) {
-                    .i64 => |r| return .{ .i64 = @divTrunc(l, r) },
+                    .i64 => |r| {
+                        if (r == 0) {
+                            try self.setErrorFmt("Division by zero: {d} / 0", .{l});
+                            return error.DivisionByZero;
+                        }
+                        return .{ .i64 = @divTrunc(l, r) };
+                    },
                     .f64 => |r| return .{ .f64 = @as(f64, @floatFromInt(l)) / r },
                     else => {},
                 },
@@ -713,7 +732,13 @@ pub fn VM(comptime App: type) type {
         fn modulus(self: *Self, left: Value, right: Value) ArithmeticError!Value {
             switch (left) {
                 .i64 => |l| switch (right) {
-                    .i64 => |r| return .{ .i64 = @mod(l, r) },
+                    .i64 => |r| {
+                        if (r == 0) {
+                            try self.setErrorFmt("Modulus by zero: {d} % 0", .{l});
+                            return error.DivisionByZero;
+                        }
+                        return .{ .i64 = @mod(l, r) };
+                    },
                     else => {},
                 },
                 else => {},
