@@ -35,7 +35,7 @@ pub fn VM(comptime App: type) type {
 
         const Self = @This();
 
-        // we expect allocator tp be an arena
+        // we expect allocator to be an arena
         pub fn init(allocator: Allocator, app: App) Self {
             return .{
                 .app = app,
@@ -59,18 +59,26 @@ pub fn VM(comptime App: type) type {
                 return error.IncompatibleVersion;
             }
 
+            // Header layout — see byte_code.zig HEADER_SIZE.
+            const HEADER_SIZE: u32 = 13;
             var ip = byte_code.ptr;
-            const code_end = 9 + @as(u32, @bitCast(ip[1..5].*));
+            const code_end = HEADER_SIZE + @as(u32, @bitCast(ip[1..5].*));
 
-            if (code_end == 9) {
+            if (code_end == HEADER_SIZE) {
                 return .{ .null = {} };
             }
 
-            const code = byte_code[9..code_end];
+            const code = byte_code[HEADER_SIZE..code_end];
             const data = byte_code[code_end..];
 
+            // Pre-allocate the stack to the script's peak depth. CALL into
+            // user functions will grow further if their local_peak demands it
+            // (also stored in the function header in the data section).
+            const script_peak = @as(u32, @bitCast(ip[9..13].*));
+            try self._stack.ensureTotalCapacity(self._allocator, script_peak);
+
             // goto to the main script
-            ip += 9 + @as(u32, @bitCast(ip[5..9].*));
+            ip += HEADER_SIZE + @as(u32, @bitCast(ip[5..9].*));
 
             const ref_pool = &self._ref_pool;
             const allocator = self._allocator;
@@ -110,7 +118,7 @@ pub fn VM(comptime App: type) type {
                     .PUSH => {
                         const value = stack.getLast();
                         self.acquire(value);
-                        try stack.append(allocator, value);
+                        stack.appendAssumeCapacity(value);
                     },
                     .OUTPUT => {
                         var value = stack.pop().?;
@@ -124,16 +132,16 @@ pub fn VM(comptime App: type) type {
                     },
                     .CONSTANT_I64 => {
                         const value = @as(i64, @bitCast(ip[0..8].*));
-                        try stack.append(allocator, .{ .i64 = value });
+                        stack.appendAssumeCapacity(.{ .i64 = value });
                         ip += 8;
                     },
                     .CONSTANT_F64 => {
                         const value = @as(f64, @bitCast(ip[0..8].*));
-                        try stack.append(allocator, .{ .f64 = value });
+                        stack.appendAssumeCapacity(.{ .f64 = value });
                         ip += 8;
                     },
                     .CONSTANT_BOOL => {
-                        try stack.append(allocator, .{ .bool = ip[0] == 1 });
+                        stack.appendAssumeCapacity(.{ .bool = ip[0] == 1 });
                         ip += 1;
                     },
                     .CONSTANT_STRING => {
@@ -142,17 +150,17 @@ pub fn VM(comptime App: type) type {
 
                         const string_start = data_start + 4;
                         const string_end = @as(u32, @bitCast(data[data_start..string_start][0..4].*));
-                        try stack.append(allocator, .{ .string = data[string_start..string_end] });
+                        stack.appendAssumeCapacity(.{ .string = data[string_start..string_end] });
                     },
                     .CONSTANT_NULL => {
-                        try stack.append(allocator, .{ .null = {} });
+                        stack.appendAssumeCapacity(.{ .null = {} });
                     },
                     .GET_GLOBAL => {
                         const idx = if (comptime SL == 1) ip[0] else @as(u16, @bitCast(ip[0..2].*));
                         const value = globals.items[idx];
                         self.acquire(value);
                         // GET_GLOBAL pushes the global onto the stack
-                        try stack.append(allocator, value);
+                        stack.appendAssumeCapacity(value);
                         ip += SL;
                     },
                     .SET_GLOBAL => {
@@ -172,14 +180,14 @@ pub fn VM(comptime App: type) type {
                         ip += SL;
 
                         const v = try self.add(globals.items[idx], .{ .i64 = incr });
-                        try stack.append(allocator, v);
+                        stack.appendAssumeCapacity(v);
                         globals.items[idx] = v;
                     },
                     .GET_LOCAL => {
                         const idx = if (comptime SL == 1) ip[0] else @as(u16, @bitCast(ip[0..2].*));
                         const value = stack.items[frame_pointer + idx];
                         self.acquire(value);
-                        try stack.append(allocator, value);
+                        stack.appendAssumeCapacity(value);
                         ip += SL;
                     },
                     .SET_LOCAL => {
@@ -199,7 +207,7 @@ pub fn VM(comptime App: type) type {
 
                         const adjusted_idx = frame_pointer + idx;
                         const v = try self.add(stack.items[adjusted_idx], .{ .i64 = incr });
-                        try stack.append(allocator, v);
+                        stack.appendAssumeCapacity(v);
                         stack.items[adjusted_idx] = v;
                     },
                     .ADD => try self.arithmetic(stack, &add),
@@ -241,10 +249,10 @@ pub fn VM(comptime App: type) type {
                         const value_count = ip[0];
                         ip += 1;
 
-                        // * 2 because we're going to be holding both the iterator and the value being iterated in
-                        // + 1 for the true/false we inject after every FOREACH_ITERATE
-                        try stack.ensureUnusedCapacity(allocator, (2 * value_count) + 1);
-
+                        // Capacity for the N placeholders plus the N+1 slots
+                        // FOREACH_ITERATE will need is already reserved by the
+                        // compiler's depth tracking — see byte_code.zig's
+                        // foreach/foreachIterate helpers.
                         var items = stack.items;
 
                         const len = items.len;
@@ -338,7 +346,7 @@ pub fn VM(comptime App: type) type {
                                 var list = &ref.value.list;
 
                                 if (value_count == 0) {
-                                    try stack.append(allocator, .{ .ref = ref });
+                                    stack.appendAssumeCapacity(.{ .ref = ref });
                                 } else {
                                     std.debug.assert(stack.items.len >= value_count);
                                     try list.ensureTotalCapacity(allocator, value_count);
@@ -362,7 +370,7 @@ pub fn VM(comptime App: type) type {
                                 var map = &ref.value.map;
 
                                 if (entry_count == 0) {
-                                    try stack.append(allocator, .{ .ref = ref });
+                                    stack.appendAssumeCapacity(.{ .ref = ref });
                                 } else {
                                     // * 2 since every entry is made up of a key and a value
                                     std.debug.assert(stack.items.len >= entry_count * 2);
@@ -467,10 +475,21 @@ pub fn VM(comptime App: type) type {
                         const data_start = @as(u32, @bitCast(ip[0..4].*));
                         ip += 4;
 
-                        const meta = data[data_start .. data_start + 5];
-
+                        // Function header in the data section: arity (1) +
+                        // code_pos (4) + local_peak (4). local_peak is the
+                        // max stack depth the callee will ever need above its
+                        // frame_pointer (it already includes the arity slots).
+                        const meta = data[data_start .. data_start + 9];
                         const arity = meta[0];
                         const code_pos = @as(u32, @bitCast(meta[1..5][0..4].*));
+                        const local_peak = @as(u32, @bitCast(meta[5..9][0..4].*));
+
+                        // The args are already on the stack and become the
+                        // callee's first locals; ensure room for everything
+                        // it might push on top of them.
+                        if (local_peak > arity) {
+                            try stack.ensureUnusedCapacity(allocator, local_peak - arity);
+                        }
 
                         // Capture the state of our current frame. This is what
                         // we'll return to.
@@ -482,7 +501,7 @@ pub fn VM(comptime App: type) type {
                         // adjust our frame pointer
                         frame_pointer = stack.items.len - arity;
 
-                        // Push a new frame. This is the functiont that we're
+                        // Push a new frame. This is the function that we're
                         // going to be executing.
                         frame_count += 1;
 
@@ -509,7 +528,7 @@ pub fn VM(comptime App: type) type {
 
                         const result = try self.app.call(self, @enumFromInt(function_id), stack.items[stack.items.len - arity ..]);
                         self.releaseCount(stack, arity);
-                        try stack.append(allocator, result);
+                        stack.appendAssumeCapacity(result);
                     },
                     .PRINT => {
                         const arity = ip[0];
@@ -555,7 +574,7 @@ pub fn VM(comptime App: type) type {
                         const frame = frames[frame_count];
                         ip = frame.ip;
                         frame_pointer = frame.frame_pointer;
-                        try stack.append(allocator, value);
+                        stack.appendAssumeCapacity(value);
                     },
                     .DEBUG => {
                         // debug information always contains a 2 byte length

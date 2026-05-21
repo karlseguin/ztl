@@ -578,7 +578,7 @@ pub fn Compiler(comptime A: type) type {
                         jump_loop_false = try jumper.forward(self, .JUMP_IF_FALSE_POP);
                     }
 
-                    var incr: []const u8 = &.{};
+                    var incr: @import("byte_code.zig").ByteCode(A).Captured = .{ .code = &.{}, .peak = 0 };
                     if (try self.match(.RIGHT_PARENTHESIS) == false) {
                         // increment
                         writer.beginCapture();
@@ -587,7 +587,11 @@ pub fn Compiler(comptime A: type) type {
                         // need to dupe, because the temp space used by scanner
                         // to capture might get reused (in a nested for, for example)
                         // because we use the value later on.
-                        incr = try self.arena.dupe(u8, writer.endCapture());
+                        const captured = writer.endCapture();
+                        incr = .{
+                            .code = try self.arena.dupe(u8, captured.code),
+                            .peak = captured.peak,
+                        };
                         try self.consume(.RIGHT_PARENTHESIS, "closing parenthesis (')')");
                     }
 
@@ -603,7 +607,7 @@ pub fn Compiler(comptime A: type) type {
                     // is called, the code naturally jumps back to the top)
                     try breakable_scope.continueHere();
 
-                    try writer.write(incr);
+                    try writer.writeCaptured(incr);
 
                     // back to condition check
                     try jump_loop_top.goto();
@@ -669,7 +673,7 @@ pub fn Compiler(comptime A: type) type {
                         return error.InvalidIterableCount;
                     }
 
-                    try writer.opWithData(.FOREACH, &.{@intCast(iterable_count)});
+                    try writer.foreach(@intCast(iterable_count));
 
                     // this is where we jump back to after every loop
                     const jump_loop_top = jumper.backward(self);
@@ -694,7 +698,7 @@ pub fn Compiler(comptime A: type) type {
 
                     const continue_pos = writer.currentPos();
 
-                    try writer.opWithData(.FOREACH_ITERATE, &.{@intCast(iterable_count)});
+                    try writer.foreachIterate(@intCast(iterable_count));
                     const jump_if_false = try jumper.forward(self, .JUMP_IF_FALSE_POP);
 
                     // BODY
@@ -789,7 +793,7 @@ pub fn Compiler(comptime A: type) type {
                     if (std.mem.eql(u8, name, "@print")) {
                         const arity = try self.parameterList(32);
                         try self.consumeSemicolon(true);
-                        return self.writer.opWithData(.PRINT, &.{arity});
+                        return self.writer.print(arity);
                     }
 
                     if (std.mem.eql(u8, name, "@include")) {
@@ -847,7 +851,7 @@ pub fn Compiler(comptime A: type) type {
                         if (gop.found_existing) {
                             // unlikely, but this file has already been included. So there isn't anything
                             // more to do but to call it.
-                            return self.writer.opWithData(.CALL, std.mem.asBytes(&gop.value_ptr.data_pos));
+                            return self.writer.call(gop.value_ptr.data_pos, 1);
                         }
 
                         // Ask the app for the include source
@@ -891,7 +895,7 @@ pub fn Compiler(comptime A: type) type {
                         gop.value_ptr.code_pos = try writer.endFunction(gop.value_ptr.data_pos, 1);
 
                         try self.endScope(true);
-                        return self.writer.opWithData(.CALL, std.mem.asBytes(&gop.value_ptr.data_pos));
+                        return self.writer.call(gop.value_ptr.data_pos, 1);
                     }
                     try self.setErrorFmt("Function '{s}' is not a built-in function", .{name});
                     return error.UnknownBuiltin;
@@ -1255,10 +1259,7 @@ pub fn Compiler(comptime A: type) type {
                     return error.WrongParameterCount;
                 }
 
-                var buf: [3]u8 = undefined;
-                buf[0] = @intCast(arity);
-                @memcpy(buf[1..], std.mem.asBytes(&cf.function_id));
-                return self.writer.opWithData(.CALL_ZIG, &buf);
+                return self.writer.callZig(@intCast(arity), cf.function_id);
             }
 
             const gop = try self.functions.getOrPut(self.arena, name);
@@ -1266,7 +1267,7 @@ pub fn Compiler(comptime A: type) type {
                 gop.value_ptr.* = try self.newFunction(name);
             }
             try self.function_calls.append(self.arena, .{ .name = name, .arity = @intCast(arity) });
-            return self.writer.opWithData(.CALL, std.mem.asBytes(&gop.value_ptr.data_pos));
+            return self.writer.call(gop.value_ptr.data_pos, @intCast(arity));
         }
 
         fn dot(self: *Self, _: bool) Error!void {
@@ -1324,11 +1325,7 @@ pub fn Compiler(comptime A: type) type {
 
             try self.verifyMethodArity(m, arity);
 
-            var buf: [3]u8 = undefined;
-            const method_id: u16 = @intFromEnum(m);
-            buf[0] = arity;
-            @memcpy(buf[1..3], std.mem.asBytes(&method_id));
-            return self.writer.opWithData(.METHOD, &buf);
+            return self.writer.method(arity, @intFromEnum(m));
         }
 
         fn verifyMethodArity(self: *Self, m: Method, arity: u8) !void {

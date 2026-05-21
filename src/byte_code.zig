@@ -6,7 +6,36 @@ const config = @import("config.zig");
 const Method = @import("vm.zig").Method;
 const Property = @import("vm.zig").Property;
 
-pub const VERSION: u8 = 0;
+pub const VERSION: u8 = 1;
+
+// Size (in bytes) of the metadata header we write to the data section for each
+// top-level function: arity (1) + code_pos (4) + local_peak (4).
+pub const FUNCTION_HEADER_SIZE: usize = 9;
+
+// Tracks bytecode stack depth at compile time so the VM can pre-allocate its
+// value stack exactly.
+const DepthTracker = struct {
+    // the high water mark
+    max: u32 = 0,
+
+    // running depth, can temporarily dip int negative, but will always get
+    // balanced out.
+    current: i32 = 0,
+
+    fn pushed(self: *DepthTracker, n: u32) void {
+        const current: i32 = self.current + @as(i32, @intCast(n));
+        if (current > 0) {
+            if (current > self.max) {
+                self.max = @intCast(current);
+            }
+        }
+        self.current = current;
+    }
+
+    fn popped(self: *DepthTracker, n: u32) void {
+        self.current -= @intCast(n);
+    }
+};
 
 pub fn ByteCode(comptime App: type) type {
     const MAX_CALL_FRAMES = config.extract(App, "max_call_frames");
@@ -34,6 +63,12 @@ pub fn ByteCode(comptime App: type) type {
 
         pop_state: PopState,
 
+        // Per-frame stack-depth book keeping. `depth` points at the tracker for
+        // the active frame (or `temp_depth` while a capture is in progress).
+        depth: *DepthTracker,
+        temp_depth: DepthTracker,
+        frame_depth: [MAX_CALL_FRAMES]DepthTracker,
+
         const LocalIndex = config.LocalType(App);
         const SL = @sizeOf(LocalIndex);
 
@@ -49,6 +84,9 @@ pub fn ByteCode(comptime App: type) type {
                 .frames = undefined,
                 .frame_count = 0,
                 .allocator = allocator,
+                .depth = undefined,
+                .temp_depth = .{},
+                .frame_depth = [_]DepthTracker{.{}} ** MAX_CALL_FRAMES,
             };
         }
 
@@ -57,10 +95,13 @@ pub fn ByteCode(comptime App: type) type {
         }
 
         pub fn op(self: *Self, op_code: OpCode) !void {
+            self.trackFixedOp(op_code);
             return self.frame.write(self.allocator, &.{@intFromEnum(op_code)});
         }
 
         pub fn op2(self: *Self, op_code1: OpCode, op_code2: OpCode) !void {
+            self.trackFixedOp(op_code1);
+            self.trackFixedOp(op_code2);
             return self.frame.write(self.allocator, &.{ @intFromEnum(op_code1), @intFromEnum(op_code2) });
         }
 
@@ -73,7 +114,72 @@ pub fn ByteCode(comptime App: type) type {
             return self.frame.write(self.allocator, data);
         }
 
+        // Stack-effect table for opcodes whose effect is fixed (does not depend
+        // on an inline operand). Variable-effect opcodes (POP, FOREACH,
+        // INITIALIZE, METHOD, CALL, CALL_ZIG, PRINT) are tracked in their
+        // dedicated emission helpers below.
+        fn trackFixedOp(self: *Self, op_code: OpCode) void {
+            switch (op_code) {
+                .PUSH,
+                .CONSTANT_BOOL,
+                .CONSTANT_F64,
+                .CONSTANT_I64,
+                .CONSTANT_NULL,
+                .CONSTANT_STRING,
+                .GET_GLOBAL,
+                .GET_LOCAL,
+                .INCR_GLOBAL,
+                .INCR_LOCAL,
+                => self.depth.pushed(1),
+
+                .OUTPUT,
+                .OUTPUT_ESCAPE,
+                .ADD,
+                .SUBTRACT,
+                .MULTIPLY,
+                .DIVIDE,
+                .MODULUS,
+                .EQUAL,
+                .GREATER,
+                .LESSER,
+                .JUMP_IF_FALSE_POP,
+                .INDEX_GET,
+                => self.depth.popped(1),
+
+                .INDEX_SET,
+                .INCR_REF,
+                => self.depth.popped(2),
+
+                .RETURN => self.depth.popped(1),
+
+                // No net effect: peek-only or in-place transforms.
+                .SET_GLOBAL,
+                .SET_LOCAL,
+                .NEGATE,
+                .NOT,
+                .JUMP,
+                .JUMP_IF_FALSE,
+                .PROPERTY_GET,
+                .DEBUG,
+                => {},
+
+                // These have variable effect and must be tracked by their
+                // dedicated emission helpers, not here.
+                .POP,
+                .FOREACH,
+                .FOREACH_ITERATE,
+                .INITIALIZE,
+                .METHOD,
+                .CALL,
+                .CALL_ZIG,
+                .PRINT,
+                => {},
+            }
+        }
+
         pub fn pop(self: *Self) !void {
+            self.depth.popped(1);
+
             const pos = self.currentPos();
             const pop_state = &self.pop_state;
 
@@ -91,13 +197,13 @@ pub fn ByteCode(comptime App: type) type {
             }
 
             // either we aren't following a pop or (much less likely, we've
-            // reached the 255 pop-per-op limit)
+            // reached the 255 pop-per-op limit). Bypass `op()`/`opWithData()`
+            // so the fixed-op tracker doesn't double-count.
             self.pop_state = .{
                 .count = 1,
                 .last_pop = pos,
             };
-
-            return self.opWithData(.POP, &.{1});
+            return self.frame.write(self.allocator, &.{ @intFromEnum(OpCode.POP), 1 });
         }
 
         pub fn beginScript(self: *Self) void {
@@ -106,6 +212,8 @@ pub fn ByteCode(comptime App: type) type {
 
             self.frames[0] = .{};
             self.frame = &self.frames[0];
+            self.frame_depth[0] = .{};
+            self.depth = &self.frame_depth[0];
         }
 
         pub fn beginFunction(self: *Self, name: []const u8) !void {
@@ -115,7 +223,15 @@ pub fn ByteCode(comptime App: type) type {
             }
             self.frames[fc] = .{};
             self.frame = &self.frames[fc];
+            self.frame_depth[fc] = .{};
+            self.depth = &self.frame_depth[fc];
             self.frame_count = fc;
+
+            // The callee's stack frame starts with `arity` values already on
+            // the stack (the arguments). Account for that so local_peak
+            // correctly reflects the maximum slots the function ever needs
+            // ABOVE its caller, including its own argument slots.
+            // We don't know arity yet — endFunction will fold it in.
 
             if (comptime config.shouldDebug(App, .full)) {
                 // function names can be long because of the auto-generated
@@ -159,13 +275,22 @@ pub fn ByteCode(comptime App: type) type {
             // copy our function code from the frame into the final code
             try self.code.write(self.allocator, self.frame.buf[0..self.frame.pos]);
 
-            // fill in the frame's data header (the arity and the position in code)
+            // The runtime stack for the callee includes its `arity` argument
+            // slots which the VM reuses as the callee's first locals. Our
+            // tracker started at 0, so add `arity` to get the actual peak
+            // capacity the callee needs above the caller's stack top at the
+            // moment of CALL (which has already been adjusted for the args).
+            const local_peak = self.frame_depth[self.frame_count].max + @as(u32, arity);
+
+            // fill in the frame's data header: arity (1) + code_pos (4) + local_peak (4)
             self.data.buf[data_pos] = arity;
             @memcpy(self.data.buf[data_pos + 1 .. data_pos + 5], std.mem.asBytes(&code_pos));
+            @memcpy(self.data.buf[data_pos + 5 .. data_pos + 9], std.mem.asBytes(&local_peak));
 
             const frame_count = self.frame_count - 1;
             self.frame_count = frame_count;
             self.frame = &self.frames[frame_count];
+            self.depth = &self.frame_depth[frame_count];
 
             // reset the pop state, since our last pop position is all messed up
             self.pop_state = .{};
@@ -181,6 +306,7 @@ pub fn ByteCode(comptime App: type) type {
             try self.data.write(self.allocator, &.{
                 0, //arity
                 0, 0, 0, 0, // position in code
+                0, 0, 0, 0, // local_peak
             });
 
             if (comptime config.shouldDebug(App, .minimal)) {
@@ -197,18 +323,85 @@ pub fn ByteCode(comptime App: type) type {
         pub fn beginCapture(self: *Self) void {
             std.debug.assert(self.temp.pos == 0);
             self.frame = &self.temp;
+            self.temp_depth = .{};
+            self.depth = &self.temp_depth;
         }
 
-        pub fn endCapture(self: *Self) []const u8 {
+        pub fn endCapture(self: *Self) Captured {
             const code = self.frame.buf[0..self.frame.pos];
+            const peak = self.temp_depth.max;
             self.frame = &self.frames[self.frame_count];
+            self.depth = &self.frame_depth[self.frame_count];
             self.temp.pos = 0;
-            return code;
+            return .{ .code = code, .peak = peak };
+        }
+
+        pub const Captured = struct {
+            code: []const u8,
+            peak: u32,
+        };
+
+        // Glue captured bytecode back into the current frame. The captured
+        // code is expected to be stack-balanced (current net effect = 0), but
+        // its peak may push our running max higher at the splice point.
+        pub fn writeCaptured(self: *Self, captured: Captured) !void {
+            try self.frame.write(self.allocator, captured.code);
+            if (self.depth.current >= 0 and captured.peak > 0) {
+                const c: u32 = @intCast(self.depth.current);
+                const projected = c + captured.peak;
+                if (projected > self.depth.max) {
+                    self.depth.max = projected;
+                }
+            }
         }
 
         pub fn insertInt(self: *Self, comptime T: type, pos: u32, value: T) void {
             const end = pos + @sizeOf(T);
             @memcpy(self.frame.buf[pos..end], std.mem.asBytes(&value));
+        }
+
+        pub fn foreach(self: *Self, value_count: u8) !void {
+            // Replaces N iterables in place with N iterators (no size change),
+            // then pushes N null placeholders. Net: +N.
+            self.depth.pushed(value_count);
+            try self.opWithData(.FOREACH, &.{value_count});
+        }
+
+        pub fn foreachIterate(self: *Self, value_count: u8) !void {
+            // Pushes `value_count` next-values plus one bool flag.
+            // The flag is consumed by the following JUMP_IF_FALSE_POP.
+            self.depth.pushed(@as(u32, value_count) + 1);
+            try self.opWithData(.FOREACH_ITERATE, &.{value_count});
+        }
+
+        pub fn print(self: *Self, arity: u8) !void {
+            self.depth.popped(arity);
+            try self.opWithData(.PRINT, &.{arity});
+        }
+
+        pub fn call(self: *Self, data_pos: u32, arity: u8) !void {
+            // Consumes `arity` arguments; the matching RETURN pushes 1 result.
+            self.depth.popped(arity);
+            self.depth.pushed(1);
+            try self.opWithData(.CALL, std.mem.asBytes(&data_pos));
+        }
+
+        pub fn callZig(self: *Self, arity: u8, function_id: u16) !void {
+            self.depth.popped(arity);
+            self.depth.pushed(1);
+            var buf: [3]u8 = undefined;
+            buf[0] = arity;
+            @memcpy(buf[1..], std.mem.asBytes(&function_id));
+            try self.opWithData(.CALL_ZIG, &buf);
+        }
+
+        pub fn method(self: *Self, arity: u8, method_id: u16) !void {
+            // Target + arity args -> result. Net: -arity.
+            self.depth.popped(arity);
+            var buf: [3]u8 = undefined;
+            buf[0] = arity;
+            @memcpy(buf[1..], std.mem.asBytes(&method_id));
+            try self.opWithData(.METHOD, &buf);
         }
 
         pub fn @"i64"(self: *Self, value: i64) !void {
@@ -246,6 +439,9 @@ pub fn ByteCode(comptime App: type) type {
         }
 
         pub fn initializeArray(self: *Self, value_count: u32) !void {
+            // pops `value_count` values, pushes one list ref
+            self.depth.popped(value_count);
+            self.depth.pushed(1);
             var buf: [5]u8 = undefined;
             buf[0] = @intFromEnum(OpCode.Initialize.ARRAY);
             @memcpy(buf[1..], std.mem.asBytes(&value_count));
@@ -253,6 +449,9 @@ pub fn ByteCode(comptime App: type) type {
         }
 
         pub fn initializeMap(self: *Self, entry_count: u32) !void {
+            // pops `entry_count * 2` (key+value pairs), pushes one map ref
+            self.depth.popped(entry_count * 2);
+            self.depth.pushed(1);
             var buf: [5]u8 = undefined;
             buf[0] = @intFromEnum(OpCode.Initialize.MAP);
             @memcpy(buf[1..], std.mem.asBytes(&entry_count));
@@ -289,24 +488,36 @@ pub fn ByteCode(comptime App: type) type {
             return self.opWithData(.DEBUG, &buf);
         }
 
+        // Bytecode layout (v1):
+        //   [0]      version (u8)
+        //   [1..5]   code_len (u32) — total bytes of code (functions + script)
+        //   [5..9]   script_start (u32) — offset of <main> within the code region
+        //   [9..13]  script_peak (u32) — max stack depth used by <main> (callee
+        //            peaks are stored per-function in the data section)
+        //   [13..]   code bytes (functions first, then <main>)
+        //   [...]    data section (string literals + function metadata)
+        pub const HEADER_SIZE: usize = 13;
+
         pub fn toBytes(self: *const Self, allocator: Allocator) ![]const u8 {
             std.debug.assert(self.frame_count == 0);
 
             const code = self.code;
             const data = self.data;
             const script = self.frames[0];
+            const script_peak = self.frame_depth[0].max;
 
             const script_start = self.code.pos;
             const code_len = script_start + script.pos;
 
-            const buf = try allocator.alloc(u8, 9 + code.pos + script.pos + data.pos);
+            const buf = try allocator.alloc(u8, HEADER_SIZE + code.pos + script.pos + data.pos);
 
             buf[0] = VERSION;
             @memcpy(buf[1..5], std.mem.asBytes(&code_len));
             @memcpy(buf[5..9], std.mem.asBytes(&script_start));
+            @memcpy(buf[9..13], std.mem.asBytes(&script_peak));
 
-            const code_end = 9 + self.code.pos;
-            @memcpy(buf[9..code_end], code.buf[0..code.pos]);
+            const code_end = HEADER_SIZE + self.code.pos;
+            @memcpy(buf[HEADER_SIZE..code_end], code.buf[0..code.pos]);
 
             const script_end = code_end + script.pos;
             @memcpy(buf[code_end..script_end], script.buf[0..script.pos]);
@@ -369,12 +580,15 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
     defer variable_names.deinit();
 
     var i: usize = 0;
+    const header_size: usize = 13;
     const code_length = @as(u32, @bitCast(byte_code[1..5].*));
     const script_start = @as(u32, @bitCast(byte_code[5..9].*));
+    const script_peak = @as(u32, @bitCast(byte_code[9..13].*));
 
-    const code = byte_code[9 .. code_length + 9];
-    const data = byte_code[9 + code_length ..];
+    const code = byte_code[header_size .. code_length + header_size];
+    const data = byte_code[header_size + code_length ..];
     try writer.print("// Version: {d}\n", .{byte_code[0]});
+    try writer.print("// Script peak stack: {d}\n", .{script_peak});
 
     while (i < code.len) {
         if (i == script_start) {
@@ -544,9 +758,11 @@ pub fn disassemble(comptime App: type, allocator: Allocator, byte_code: []const 
                 const arity = data[header_start];
                 var d = data[header_start + 1 ..];
                 const jump: u32 = @bitCast(d[0..4].*);
-                try writer.print(" {d} {x:0>4}", .{ arity, jump });
+                d = d[4..];
+                const local_peak: u32 = @bitCast(d[0..4].*);
+                d = d[4..];
+                try writer.print(" {d} {x:0>4} peak={d}", .{ arity, jump, local_peak });
                 if (comptime config.shouldDebug(App, .minimal)) {
-                    d = d[4..];
                     const name_length = d[0];
                     try writer.print(" ({s})", .{d[1 .. name_length + 1]});
                 }
@@ -656,7 +872,8 @@ test "bytecode: write + disassemble" {
     try b.null();
     try b.op(OpCode.RETURN);
     try expectDisassemble(void, b,
-        \\// Version: 0
+        \\// Version: 1
+        \\// Script peak stack: 5
         \\<main>:
         \\0000 CONSTANT_I64 -388491034
         \\0009 CONSTANT_F64 12.34567
@@ -689,12 +906,13 @@ test "bytecode: functions debug none" {
     try b.op(.RETURN);
 
     try expectDisassemble(App, b,
-        \\// Version: 0
+        \\// Version: 1
+        \\// Script peak stack: 0
         \\0000 CONSTANT_F64 44
         \\0009 RETURN
         \\
         \\<main>:
-        \\000a CALL 2 0000
+        \\000a CALL 2 0000 peak=3
         \\000f RETURN
         \\
     );
@@ -721,12 +939,13 @@ test "bytecode: functions debug minimal" {
     try b.op(.RETURN);
 
     try expectDisassemble(App, b,
-        \\// Version: 0
+        \\// Version: 1
+        \\// Script peak stack: 0
         \\0000 CONSTANT_F64 44
         \\0009 RETURN
         \\
         \\<main>:
-        \\000a CALL 2 0000 (sum)
+        \\000a CALL 2 0000 peak=3 (sum)
         \\000f RETURN
         \\
     );
@@ -753,13 +972,14 @@ test "bytecode: functions debug full" {
     try b.op(.RETURN);
 
     try expectDisassemble(App, b,
-        \\// Version: 0
+        \\// Version: 1
+        \\// Script peak stack: 0
         \\0000 fn sum:
         \\0009 CONSTANT_F64 44
         \\0012 RETURN
         \\
         \\<main>:
-        \\0013 CALL 2 0000 (sum)
+        \\0013 CALL 2 0000 peak=3 (sum)
         \\0018 RETURN
         \\
     );

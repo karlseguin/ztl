@@ -497,6 +497,34 @@ test "Template: break/continue outside loop return correct error" {
     );
 }
 
+// Stress tests for the stack pre-sizing path. If any of these miscompute the
+// peak depth, the appendAssumeCapacity in vm.zig fires its debug assert.
+test "Template: stack depth — recursion grows on demand" {
+    // CALL's ensureUnusedCapacity must let the stack grow beyond the
+    // script's pre-allocated size as recursion deepens.
+    try testTemplate("55",
+        \\<% fn fib(n) {
+        \\     if (n < 2) { return n; }
+        \\     return fib(n - 1) + fib(n - 2);
+        \\   }
+        \\-%><%= fib(10) %>
+    , .{});
+}
+
+test "Template: stack depth — deep expression nesting" {
+    try testTemplate("283",
+        \\<%= ((((1 + 2) * 3) + 4) * (5 + 6)) + (7 * (8 + 9)) + (10 + 11) %>
+    , .{});
+}
+
+test "Template: stack depth — foreach with body intermediates" {
+    try testTemplate("1+10=11\n2+20=22\n3+30=33\n",
+        \\<%- foreach([1,2,3], [10,20,30]) |a, b| { -%>
+        \\<%-= a %>+<%= b %>=<%= a + b %>
+        \\<% } -%>
+    , .{});
+}
+
 test "Template: self-reference detected inside nested function scope" {
     // Regression: localVariableIndex previously returned a scope-relative index
     // but callers indexed self.locals with it, so the `depth == null` check

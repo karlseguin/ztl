@@ -154,7 +154,6 @@ fn add(a, b) {
 }
 ```
 
-
 ## Zig Usage
 You can get an error report on failed compile by passing in a `*ztl.CompileErrorReport`:
 
@@ -204,13 +203,14 @@ const MyAppsTemplate = struct {
     pub const ZtlConfig = struct {
         // default values:
 
-        pub const debug: DebugMode = .none; // .minimal or .ful
+        pub const debug: DebugMode = .none; // .minimal or .full
         pub const max_locals: u16 = 256;
         pub const max_call_frames: u8 = 255;
         pub const initial_code_size: u32 = 512;
         pub const initial_data_size: u32 = 512;
         pub const deduplicate_string_literals: bool = true;
         pub const escape_by_default: bool = false;
+        pub const reference_counting: ReferenceCounting = .none; // .loose or .strict
     };
 
     // Defines the function and the number of arguments they take
@@ -262,7 +262,7 @@ The `@print()` builtin function prints the value(s) to stderr.
 ### @include
 A template can `@include` another. 
 
-````
+```
 // header
 Hello <%= @name %>
 
