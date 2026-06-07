@@ -53,6 +53,25 @@ pub fn main() !void {
 ## Project Status
 The project is in early development and has not seen much dogfooding. Looking for feature requests and bug reports.
 
+# Installation
+
+1. Add ztl as a dependency in your `build.zig.zon`:
+   ```bash
+   zig fetch --save "git+https://github.com/karlseguin/ztl#master"
+   ```
+   The library will track Zig master. If you're using a specific version of Zig, use the appropriate branch.
+
+2. In your `build.zig`, add the `ztl` module as a dependency to your program:
+   ```zig
+   const ztl = b.dependency("ztl", .{
+       .target = target,
+       .optimize = optimize,
+   });
+   
+   // the executable from your call to b.addExecutable(...)
+   exe.root_module.addImport("ztl", ztl.module("ztl"));
+   ```
+
 ## Template Overview
 Output tags, `<%= %>`, support space trimming via `<%-=` and `-%>`. 
 
