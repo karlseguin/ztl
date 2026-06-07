@@ -50,6 +50,26 @@ pub fn main() !void {
 }
 ```
 
+## Helpers
+`ztl.render` and `ztl.renderFile` are higher level helpers to compile and render in a single call. The returned slice is owned by the caller and must be freed with the given allocator:
+
+```zig
+// `null` means "no App"; pass an App instance to enable custom functions,
+// escaping config, etc. (the same App you'd give Template).
+const html = try ztl.render(allocator, null, "Hello <%= @name %>", .{ 
+    .name = "Leto" 
+});
+defer allocator.free(html);
+
+// renderFile reads the template from disk; it needs an Io for the read.
+const page = try ztl.renderFile(io, allocator, null, "templates/home.ztl", .{
+    .name = "Leto" 
+});
+defer allocator.free(page);
+```
+
+These recompile the template on every call. For anything that renders the same template more than once (e.g. a request handler), compile a `Template` once and call `render` many times — `render` is thread-safe and avoids re-compiling.
+
 ## Project Status
 The project is in early development and has not seen much dogfooding. Looking for feature requests and bug reports.
 

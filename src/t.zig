@@ -4,6 +4,7 @@ const Value = @import("value.zig").Value;
 const KeyValue = @import("value.zig").KeyValue;
 
 const Allocator = std.mem.Allocator;
+pub const io = std.testing.io;
 pub const allocator = std.testing.allocator;
 
 pub const expectEqual = std.testing.expectEqual;
