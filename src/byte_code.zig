@@ -86,7 +86,7 @@ pub fn ByteCode(comptime App: type) type {
                 .allocator = allocator,
                 .depth = undefined,
                 .temp_depth = .{},
-                .frame_depth = [_]DepthTracker{.{}} ** MAX_CALL_FRAMES,
+                .frame_depth = @splat(.{}),
             };
         }
 

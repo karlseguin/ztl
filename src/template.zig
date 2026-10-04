@@ -82,14 +82,14 @@ pub fn Template(comptime App: type) type {
                     }
                 }
             } else switch (@typeInfo(T)) {
-                .@"struct" => |s| inline for (s.fields) |f| {
-                    const value = vm.createValue(@field(globals, f.name)) catch {
+                .@"struct" => |s| inline for (s.field_names) |fname| {
+                    const value = vm.createValue(@field(globals, fname)) catch {
                         if (opts.error_report) |er| {
-                            er.message = "Unsupported argument type: " ++ @typeName(@TypeOf(@field(globals, f.name)));
+                            er.message = "Unsupported argument type: " ++ @typeName(@TypeOf(@field(globals, fname)));
                         }
                         return error.InvalidArgument;
                     };
-                    if (self.getIndex(f.name)) |index| {
+                    if (self.getIndex(fname)) |index| {
                         vm.injectGlobal(value, index);
                     }
                 },
@@ -427,9 +427,10 @@ test "Template: multiple index get" {
 
 // https://github.com/karlseguin/ztl/issues/6
 test "Template: large" {
-    try testTemplate("a" ** 1024, "a" ** 1024, .{});
-    try testTemplate("a" ** (1024 * 128), "a" ** (1024 * 128), .{});
-    try testTemplate("a" ** (1024 * 1024), "a" ** (1024 * 1024), .{});
+    try testTemplate(&@as([1024]u8, @splat('a')), &@as([1024]u8, @splat('a')), .{});
+    try testTemplate(&@as([1024 * 128]u8, @splat('a')), &@as([1024 * 128]u8, @splat('a')), .{});
+    try testTemplate(&@as([1024 * 1024]u8, @splat('a')), &@as([1024 * 1024]u8, @splat('a')), .{});
+    // try testTemplate("a" ** (1024 * 128), "a" ** (1024 * 128), .{});
 }
 
 // https://github.com/karlseguin/ztl/issues/7

@@ -1347,9 +1347,9 @@ pub fn VM(comptime App: type) type {
                 .@"struct" => |s| {
                     const allocator = self._allocator;
                     var map: Value.Map = .{};
-                    try map.ensureTotalCapacity(allocator, s.fields.len);
-                    inline for (s.fields) |field| {
-                        map.putAssumeCapacity(.{ .string = field.name }, try self.createValue(@field(zig, field.name)));
+                    try map.ensureTotalCapacity(allocator, s.field_names.len);
+                    inline for (s.field_names) |fname| {
+                        map.putAssumeCapacity(.{ .string = fname }, try self.createValue(@field(zig, fname)));
                     }
                     const ref = try self.createRef();
                     ref.* = .{ .value = .{ .map = map } };

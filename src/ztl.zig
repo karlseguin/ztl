@@ -62,7 +62,7 @@ pub fn Functions(comptime A: type) type {
     var values: [declarations.len]u16 = undefined;
 
     for (declarations, 0..) |d, i| {
-        names[i] = d.name;
+        names[i] = d;
         values[i] = i;
     }
 

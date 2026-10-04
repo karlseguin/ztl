@@ -33,14 +33,14 @@ pub fn Compiler(comptime A: type) type {
 
     if (std.meta.hasMethod(App, "partial")) {
         const partial_fn = @typeInfo(@TypeOf(App.partial)).@"fn";
-        const params = partial_fn.params;
+        const params = partial_fn.param_types;
 
         const valid_parameters = blk: {
             if (params.len == 4) {
-                break :blk params[0].type.? == A and
-                    params[1].type.? == Allocator and
-                    params[2].type.? == []const u8 and
-                    params[3].type.? == []const u8;
+                break :blk params[0].? == A and
+                    params[1].? == Allocator and
+                    params[2].? == []const u8 and
+                    params[3].? == []const u8;
             }
             break :blk false;
         };
@@ -59,12 +59,12 @@ pub fn Compiler(comptime A: type) type {
     const CustomFunctionLookup: std.StaticStringMap(CustomFunctionMeta) = if (App == void or @hasDecl(App, "ZtlFunctions") == false) blk: {
         break :blk std.StaticStringMap(CustomFunctionMeta).initComptime(.{});
     } else blk: {
-        const fields = @typeInfo(CustomFunctions).@"enum".fields;
-        var metas: [fields.len]struct { []const u8, CustomFunctionMeta } = undefined;
-        for (fields, 0..) |field, i| {
-            metas[i] = .{ field.name, .{
-                .function_id = field.value,
-                .arity = @field(App.ZtlFunctions, field.name),
+        const CF = @typeInfo(CustomFunctions).@"enum";
+        var metas: [CF.field_names.len]struct { []const u8, CustomFunctionMeta } = undefined;
+        for (CF.field_names, CF.field_values, 0..) |fname, fvalue, i| {
+            metas[i] = .{ fname, .{
+                .function_id = fvalue,
+                .arity = @field(App.ZtlFunctions, fname),
             } };
         }
         break :blk std.StaticStringMap(CustomFunctionMeta).initComptime(metas);
@@ -151,29 +151,35 @@ pub fn Compiler(comptime A: type) type {
         }
 
         pub fn compile(self: *Self, src: []const u8) Error!void {
-            errdefer |err| if (self.opts.error_report) |er| {
-                var msg = self.err;
-                if (msg == null) {
-                    if (err == error.UnexpectedCharacter) {
-                        msg = std.fmt.allocPrint(self.arena, "('{c}')", .{src[self.error_pos]}) catch null;
+            self._compile(src) catch |err| {
+                if (self.opts.error_report) |er| {
+                    var msg = self.err;
+                    if (msg == null) {
+                        if (err == error.UnexpectedCharacter) {
+                            msg = std.fmt.allocPrint(self.arena, "('{c}')", .{src[self.error_pos]}) catch null;
+                        }
                     }
-                }
 
-                var src_of_err = src;
-                var include_key: ?[]const u8 = null;
-                if (self.includes.getLastOrNull()) |include| {
-                    src_of_err = include.src;
-                    include_key = include.key;
-                }
+                    var src_of_err = src;
+                    var include_key: ?[]const u8 = null;
+                    if (self.includes.getLastOrNull()) |include| {
+                        src_of_err = include.src;
+                        include_key = include.key;
+                    }
 
-                er.* = .{
-                    .err = err,
-                    .src = src_of_err,
-                    .pos = self.error_pos,
-                    .message = msg orelse "",
-                    .include_key = include_key,
-                };
+                    er.* = .{
+                        .err = err,
+                        .src = src_of_err,
+                        .pos = self.error_pos,
+                        .message = msg orelse "",
+                        .include_key = include_key,
+                    };
+                }
+                return err;
             };
+        }
+
+        fn _compile(self: *Self, src: []const u8) !void {
             var writer = &self.writer;
 
             self.scanner = Scanner.init(self.arena, src);
@@ -1980,8 +1986,8 @@ const Precedence = enum {
 
 fn maxRuleIndex(comptime E: type) usize {
     var max: usize = 0;
-    for (@typeInfo(@typeInfo(E).@"union".tag_type.?).@"enum".fields) |f| {
-        max = @max(max, f.value);
+    for (@typeInfo(@typeInfo(E).@"union".tag_type.?).@"enum".field_values) |fvalue| {
+        max = @max(max, fvalue);
     }
     return max + 1;
 }
@@ -2272,7 +2278,7 @@ test "Compiler: variables" {
         \\ return name;
     );
 
-    try testReturnValue(.{ .string = "LONG" }, "var " ++ "l" ** 127 ++ " = `LONG`; return " ++ "l" ** 127 ++ ";");
+    try testReturnValue(.{ .string = "LONG" }, "var " ++ @as([127]u8, @splat('l')) ++ " = `LONG`; return " ++ @as([127]u8, @splat('l')) ++ ";");
 
     try testReturnValue(.{ .string = "Leto" },
         \\ var name = `Leto`;
@@ -2313,7 +2319,7 @@ test "Compiler: variables" {
         \\ var c = 3;
     );
 
-    try testError("IdentifierTooLong", "var " ++ "a" ** 128 ++ " = null;");
+    try testError("IdentifierTooLong", "var " ++ (@as([128]u8, @splat('a'))) ++ " = null;");
 }
 
 test "Compiler: if" {
@@ -3196,7 +3202,7 @@ test "Compiler: stack overflow" {
 }
 
 test "Compiler: ztl functions" {
-    try testError("IdentifierTooLong", "fn " ++ "x" ** 128 ++ "(){}");
+    try testError("IdentifierTooLong", "fn " ++ (@as([128]u8, @splat('x'))) ++ "(){}");
 
     try testError("Unreachable code detected",
         \\ fn a() {
